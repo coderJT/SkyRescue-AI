@@ -25,6 +25,17 @@ class DroneState(BaseModel):
     unscanned_sectors: dict
     hazard_map: dict
 
+class BatchDroneState(BaseModel):
+    id: str
+    battery: float
+    pos: list[float]
+
+class BatchRequest(BaseModel):
+    idle_drones: list[BatchDroneState]
+    active_drones: list[dict]  # {id, pos, state, target_sector}
+    unscanned_sectors: dict
+    hazard_map: dict
+
 # Initialize LLM only if API key is present
 api_key = os.environ.get("MISTRAL_API_KEY")
 llm = None
@@ -84,7 +95,7 @@ REQUIRED JSON FORMAT:
 """
 
     try:
-        response = llm.invoke([
+        response = await llm.ainvoke([
             SystemMessage(content="You are a high-level rescue commander AI. You output ONLY valid JSON."),
             HumanMessage(content=prompt)
         ])
@@ -110,6 +121,80 @@ REQUIRED JSON FORMAT:
         print(f"Error calling LLM: {e}")
         first_sid = list(state.unscanned_sectors.keys())[0] if state.unscanned_sectors else "__RECALL__"
         return {"decision": first_sid, "reasoning": f"Emergency fallback: {str(e)}"}
+
+@app.post("/decide_batch")
+async def decide_batch(req: BatchRequest):
+    if not llm:
+        raise HTTPException(status_code=500, detail="MISTRAL_API_KEY not set on server")
+
+    if not req.unscanned_sectors:
+        return {"assignments": {d.id: "__RECALL__" for d in req.idle_drones}, "reasoning": "No scannable sectors remain."}
+
+    # Build multi-drone coordination prompt
+    prompt = f"""
+You are the GLOBAL SWARM COMMANDER for a critical Search & Rescue mission.
+You must assign targets to {len(req.idle_drones)} IDLE drones simultaneously.
+
+IDLE DRONES (Waiting for Orders):
+"""
+    for d in req.idle_drones:
+        prompt += f"- {d.id}: Battery {d.battery:.1f}% | Position {d.pos}\n"
+
+    prompt += "\nACTIVE TEAMMATES (Already busy):\n"
+    for d in req.active_drones:
+        ts = d.get('target_sector') or 'None'
+        prompt += f"- {d['id']}: Position {d['pos']} | Target: {ts}\n"
+
+    prompt += """
+TACTICAL CANDIDATES:
+DANGER: Survivors in FIRE die in 60s, SMOKE in 180s, others in 600s.
+"""
+    for sid, s in req.unscanned_sectors.items():
+        prompt += f"- {sid}: {s['hazard']} | Time Remaining: {s['time_left']}s | Distance: {s['distance']} units\n"
+
+    prompt += """
+COMMANDERS COORDINATION GOAL:
+1. Assign EXACTLY ONE unique sector to each IDLE drone.
+2. GLOBAL OPTIMIZATION: Ensure the CLOSEST drone is assigned to the most critical (low time) fire areas.
+3. CONFLICT AVOIDANCE: Do NOT assign a sector that is already being targeted by an ACTIVE teammate.
+4. RECALL: If a drone has low battery or no good targets remain, assign "__RECALL__".
+
+REQUIRED JSON FORMAT:
+{
+    "assignments": {
+        "drone_1": "S2_3",
+        "drone_3": "__RECALL__"
+    },
+    "reasoning": "Coordinated batch assignment: drone_1 sent to nearby fire front (S2_3), drone_3 recalled for charging."
+}
+"""
+
+    try:
+        response = await llm.ainvoke([
+            SystemMessage(content="You are a swarm coordination AI. You output ONLY valid JSON."),
+            HumanMessage(content=prompt)
+        ])
+        
+        import json
+        content = response.content.strip()
+        if content.startswith("```json"): content = content[7:-3]
+        elif content.startswith("```"): content = content[3:-3]
+        
+        result = json.loads(content)
+        # Final safety check: ensure every idle drone has an entry
+        for d in req.idle_drones:
+            if d.id not in result.get("assignments", {}):
+                result.setdefault("assignments", {})[d.id] = "__RECALL__"
+                
+        return result
+    except Exception as e:
+        print(f"Error calling LLM for batch: {e}")
+        # Emergency fallback: Assign first available sector to first drone, others recall
+        fallback = {"assignments": {}, "reasoning": f"Emergency batch fallback: {str(e)}"}
+        sids = list(req.unscanned_sectors.keys())
+        for i, d in enumerate(req.idle_drones):
+            fallback["assignments"][d.id] = sids[i] if i < len(sids) else "__RECALL__"
+        return fallback
 
 if __name__ == "__main__":
     print("Starting LLM Server on port 8000...")

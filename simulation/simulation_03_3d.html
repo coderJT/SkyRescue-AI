@@ -1044,21 +1044,18 @@ window.startMission = function() {
     addThought(-1, 'reason', 'Strategy: Prioritize fire-adjacent sectors where survivors are most likely trapped. Skip no-fly sectors.');
     
     drones.forEach((d,i) => {
-        if (useLLM) {
-            askLLMForSector(d, i);
-        } else {
-            const s = getNextSector(d, i);
-            if (s) {
-                d.target = {x: s.c*CELL+CELL/2, z: s.r*CELL+CELL/2, sector: s.k, hazard: s.hazard};
-                d.state = "moving";
-                const hLabel = s.hazard !== 'clear' ? ` ⚠${s.hazard.toUpperCase()}` : '';
-                addMCP(i, 'call', 'get_fleet_status', {}, {drone_id:`drone_${i+1}`, battery:100, status:'active'});
-                addMCP(i, 'call', 'get_hazard_map', {sector:s.k}, {hazard:s.hazard, scannable:true});
-                addThought(i, 'reason', `Assigned → sector ${s.k}${hLabel}. Est. distance: ${Math.hypot(d.group.position.x-d.target.x, d.group.position.z-d.target.z).toFixed(0)}u`);
-                if (s.hazard === 'fire') addThought(i, 'danger', `FIRE ZONE — 3× drain. High rescue priority.`);
-                addMCP(i, 'call', 'move_to', {drone_id:`drone_${i+1}`, x:d.target.x, z:d.target.z}, {status:'moving', target:s.k});
-                addThought(i, 'action', `Navigating through forest to (${d.target.x.toFixed(0)}, ${d.target.z.toFixed(0)})...`);
-            }
+        // ALWAYS launch with local assignment for instant deployment
+        const s = getNextSector(d, i);
+        if (s) {
+            d.target = {x: s.c*CELL+CELL/2, z: s.r*CELL+CELL/2, sector: s.k, hazard: s.hazard};
+            d.state = "moving";
+            const hLabel = s.hazard !== 'clear' ? ` ⚠${s.hazard.toUpperCase()}` : '';
+            addMCP(i, 'call', 'get_fleet_status', {}, {drone_id:`drone_${i+1}`, battery:100, status:'active'});
+            addMCP(i, 'call', 'get_hazard_map', {sector:s.k}, {hazard:s.hazard, scannable:true});
+            addThought(i, 'reason', `Assigned → sector ${s.k}${hLabel}. Est. distance: ${Math.hypot(d.group.position.x-d.target.x, d.group.position.z-d.target.z).toFixed(0)}u`);
+            if (s.hazard === 'fire') addThought(i, 'danger', `FIRE ZONE — 3× drain. High rescue priority.`);
+            addMCP(i, 'call', 'move_to', {drone_id:`drone_${i+1}`, x:d.target.x, z:d.target.z}, {status:'moving', target:s.k});
+            addThought(i, 'action', `Navigating through forest to (${d.target.x.toFixed(0)}, ${d.target.z.toFixed(0)})...`);
         }
     });
 };
@@ -1271,6 +1268,146 @@ function checkSurvivorsNearDrone(d, droneIdx) {
     });
 }
 
+// ─── BATCH SWARM COORDINATION ───
+const assignmentQueue = [];  // drone indices waiting for batch assignment
+let lastBatchTime = 0;
+
+function processBatchQueue() {
+    if (assignmentQueue.length === 0 || !useLLM || missionComplete) return;
+    
+    const now = performance.now();
+    if (now - lastBatchTime < 1000) return;  // Throttle: max once per second
+    lastBatchTime = now;
+    
+    addThought(-1, 'info', `COORDINATION: Batching orders for ${assignmentQueue.length} idle drone(s)...`);
+    
+    const elapsedSec = (now - missionStartTime - totalPausedTime) / 1000;
+    
+    // Build idle drones list
+    const idleDrones = assignmentQueue.map(idx => ({
+        id: `drone_${idx + 1}`,
+        battery: drones[idx].battery,
+        pos: [drones[idx].group.position.x, drones[idx].group.position.y, drones[idx].group.position.z]
+    }));
+    
+    // Build active drones list (drones NOT in the queue)
+    const activeDrones = [];
+    drones.forEach((d, idx) => {
+        if (!d.dead && !assignmentQueue.includes(idx) && d.state === 'moving' && d.target?.sector) {
+            activeDrones.push({
+                id: `drone_${idx + 1}`,
+                pos: [d.group.position.x, d.group.position.y, d.group.position.z],
+                state: d.state,
+                target_sector: d.target.sector
+            });
+        }
+    });
+    
+    // Build unscanned sectors
+    const unscannedSectors = {};
+    const hazardMap = {};
+    Object.values(sectorMeshes).forEach(sm => {
+        const qEntry = globalQueue.find(q => q.k === sm.k);
+        const isAssigned = qEntry && qEntry.assigned;
+        if (!sm.scanned && !isAssigned) {
+            const center = [sm.c * CELL + CELL / 2, sm.r * CELL + CELL / 2];
+            const limit = sm.hazard === 'fire' ? 60 : (sm.hazard === 'smoke' ? 180 : 600);
+            const timeLeft = Math.max(0, limit - elapsedSec);
+            // Use distance from closest idle drone
+            let minDist = Infinity;
+            idleDrones.forEach(id => {
+                const dist = Math.hypot(center[0] - id.pos[0], center[1] - id.pos[2]);
+                if (dist < minDist) minDist = dist;
+            });
+            unscannedSectors[sm.k] = {
+                center: center,
+                distance: parseFloat(minDist.toFixed(1)),
+                time_left: parseFloat(timeLeft.toFixed(1)),
+                hazard: sm.hazard.toUpperCase()
+            };
+            hazardMap[sm.k] = { hazard: sm.hazard };
+        }
+    });
+    
+    // Copy the queue and clear it (drones will be re-queued if assignment fails)
+    const batchIndices = [...assignmentQueue];
+    assignmentQueue.length = 0;
+    
+    if (Object.keys(unscannedSectors).length === 0) {
+        // No sectors left — recall all
+        batchIndices.forEach(idx => {
+            const d = drones[idx];
+            d.target = {x: BASE.x, z: BASE.z, sector: null, hazard: "clear"};
+            d.state = "moving";
+            addThought(idx, 'reason', `No sectors remain. Returning to base.`);
+        });
+        return;
+    }
+    
+    fetch('http://127.0.0.1:8000/decide_batch', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+            idle_drones: idleDrones,
+            active_drones: activeDrones,
+            unscanned_sectors: unscannedSectors,
+            hazard_map: hazardMap
+        })
+    })
+    .then(res => res.json())
+    .then(data => {
+        const assignments = data.assignments || {};
+        const reasoning = data.reasoning || 'No reasoning.';
+        addThought(-1, 'reason', `COMMANDER: ${reasoning}`);
+        
+        batchIndices.forEach(idx => {
+            const d = drones[idx];
+            if (d.dead) return;
+            
+            const droneKey = `drone_${idx + 1}`;
+            const assigned = assignments[droneKey];
+            
+            if (!assigned || assigned === '__RECALL__') {
+                d.target = {x: BASE.x, z: BASE.z, sector: null, hazard: "clear"};
+                d.state = "moving";
+                addThought(idx, 'reason', `Commander: RECALL — ${assigned === '__RECALL__' ? 'low battery or no targets' : 'no assignment received'}`);
+                addMCP(idx, 'call', 'recall_for_charging', {drone_id: droneKey}, {status: 'returning', target: 'base'});
+            } else {
+                const sec = Object.values(sectorMeshes).find(s => s.k === assigned);
+                if (sec && !sec.scanned) {
+                    const qEntry = globalQueue.find(q => q.k === sec.k);
+                    if (qEntry) qEntry.assigned = true;
+                    d.target = {x: sec.c * CELL + CELL / 2, z: sec.r * CELL + CELL / 2, sector: sec.k, hazard: sec.hazard};
+                    d.state = "moving";
+                    addThought(idx, 'action', `Commander assigned → ${sec.k} [${sec.hazard.toUpperCase()}]. Moving out!`);
+                    addMCP(idx, 'call', 'move_to', {drone_id: droneKey, target_sector: sec.k}, {status: 'moving', hazard: sec.hazard});
+                } else {
+                    // Sector already scanned or invalid — re-queue
+                    d.state = "waiting_orders";
+                    assignmentQueue.push(idx);
+                    addThought(idx, 'warning', `Commander assigned ${assigned} but it's already scanned. Re-queuing...`);
+                }
+            }
+        });
+    })
+    .catch(err => {
+        addThought(-1, 'warning', `Batch coordination error: ${err.message}. Falling back to local.`);
+        // Fallback: assign locally
+        batchIndices.forEach(idx => {
+            const d = drones[idx];
+            if (d.dead) return;
+            const s = getNextSector(d, idx);
+            if (s) {
+                d.target = {x: s.c * CELL + CELL / 2, z: s.r * CELL + CELL / 2, sector: s.k, hazard: s.hazard};
+                d.state = "moving";
+            } else {
+                d.target = {x: BASE.x, z: BASE.z, sector: null, hazard: "clear"};
+                d.state = "moving";
+            }
+        });
+    });
+}
+
 // ─── ANIMATION LOOP ───
 const clock = new THREE.Clock();
 let elapsed = 0;
@@ -1459,10 +1596,7 @@ function animate() {
                     addThought(i, 'danger', `Battery ${d.battery.toFixed(0)}% — est. ${batteryToReturn.toFixed(0)}% needed to RTB. Returning NOW!`);
                     d.target = {x:BASE.x, z:BASE.z, sector:null, hazard:"clear"};
                     d.state = "moving";
-                    addMCP(i, 'call', 'recall_for_charging', {drone_id:`drone_${i+1}`, battery:Math.round(d.battery), est_rtb_cost:Math.round(batteryToReturn)}, {status:'returning', target:'base'});
                 }
-
-                // checkSurvivorsNearDrone(d, i); // DISABLED during movement: must stop to scan intentionaly
             } else {
                 if (d.target.sector) {
                     d.state = "scanning"; d.scanTimer = 0;
@@ -1474,12 +1608,11 @@ function animate() {
                     addThought(i, 'action', `At base. Charging...`);
                 }
             }
-        }
+        } // End of state === "moving"
 
         if (d.state === "scanning") {
             d.scanTimer += dt;
             d.group.position.y = DRONE_FLY_HEIGHT + Math.sin(elapsed*4)*0.4;
-            // Rotate while scanning
             d.group.rotation.y += dt * 0.8;
             scanSpheres[i].material.color.setHex(0x00ff88);
             scanSpheres[i].material.opacity = 0.06 + Math.sin(elapsed*5)*0.04;
@@ -1492,18 +1625,16 @@ function animate() {
                     checkSurvivorsNearDrone(d, i);
                     d.sectorsScanned++;
                     
-                    // Release the sector lock
                     const qs = globalQueue.find(q => q.k === d.target.sector);
                     if (qs) qs.assigned = false;
                     
                     addMCP(i, 'call', 'scan_sector', {drone_id:`drone_${i+1}`, sector:d.target.sector}, {scanned:true, survivors_in_range: survivorMeshes.filter(s=>s.found).length});
                     addThought(i, 'reason', `Scan done: ${d.target.sector}. Bat: ${d.battery.toFixed(0)}%. Total: ${d.sectorsScanned} sectors.`);
                 }
-                d.battery -= 1.0; // scan cost
+                d.battery -= 1.0;
                 scanSpheres[i].material.color.setHex(0x0066ff);
                 scanSpheres[i].material.opacity = 0.04;
 
-                // Check for death during scan
                 if (d.battery <= 0) {
                     d.battery = 0; d.dead = true; d.state = 'idle';
                     d.group.position.y = 0.5;
@@ -1513,83 +1644,58 @@ function animate() {
                     return;
                 }
 
-                // Smart RTB check (same formula as movement RTB)
-                const distToBase2 = Math.hypot(d.group.position.x - BASE.x, d.group.position.z - BASE.z);
-                const batteryToReturn2 = distToBase2 * DRAIN_PER_UNIT * 1.4 + 8;
-                if (d.battery < batteryToReturn2) {
-                    addThought(i, 'danger', `Battery LOW: ${d.battery.toFixed(0)}%! RTB immediately.`);
-                    d.target = {x:BASE.x, z:BASE.z, sector:null, hazard:"clear"};
-                    d.state = "moving";
-                    addMCP(i, 'call', 'recall_for_charging', {drone_id:`drone_${i+1}`, battery:Math.round(d.battery)}, {status:'returning', target:'base'});
-                } else {
+                // CHECK GLOBAL MISSION COMPLETION BEFORE QUEUING
+                const scanned = Object.values(sectorMeshes).filter(sec=>sec.scanned).length;
+                const scannable = Object.values(sectorMeshes).filter(sec=>sec.hazard!=="no_fly").length;
+                let isComplete = (missionGoal === 'scanAll') ? (scanned === scannable) : (totalFound >= totalSurvivorsInitially || scanned === scannable);
+
+                if (isComplete && !missionComplete) {
+                    missionComplete = true;
+                    drones.forEach((allD, dIdx) => {
+                        if (!allD.dead) {
+                            allD.target = {x:BASE.x, z:BASE.z, sector:null, hazard:"clear"};
+                            allD.state = "moving";
+                            if (dIdx === i) addThought(dIdx, 'info', `Mission Objective Met [${missionGoal}]. Fleet returning to base.`);
+                        }
+                    });
+                    const totalTime = formatTime((performance.now() - missionStartTime - totalPausedTime) / 1000);
+                    addThought(-1, 'phase', 'PHASE 4: MISSION COMPLETE — Summary');
+                    addThought(-1, 'info', `Final Goal Progress: ${missionGoal === 'scanAll' ? (scanned+'/'+scannable+' sectors') : (totalFound+'/'+totalSurvivorsInitially+' survivors')}`);
+                    addThought(i, 'alert', `🎯 MISSION SUCCESS! [Total Time: ${totalTime}]`);
+                    addMCP(i, 'call', 'finalize_mission', {completion_time:totalTime, goal:missionGoal}, {status:'mission_complete'});
+                    document.getElementById('final-time').textContent = totalTime;
+                    document.getElementById('final-found').textContent = `${totalFound}/${totalSurvivorsInitially}`;
+                    document.getElementById('final-sectors').textContent = `${scanned}/${scannable}`;
+                    document.getElementById('success-modal').style.display = 'flex';
+                    d.state = "moving"; // We are already RTB-ing above
+                } else if (!missionComplete) {
+                    // IMMEDIATE ASSIGNMENT — no waiting!
                     if (useLLM) {
-                        askLLMForSector(d, i);
+                        askLLMForSector(d, i);  // Non-blocking: drone enters 'thinking' then 'moving'
                     } else {
                         const s = getNextSector(d, i);
                         if (s) {
-                            d.target = {x:s.c*CELL+CELL/2, z:s.r*CELL+CELL/2, sector:s.k, hazard:s.hazard};
+                            d.target = {x: s.c*CELL+CELL/2, z: s.r*CELL+CELL/2, sector: s.k, hazard: s.hazard};
                             d.state = "moving";
-                            const hLabel = s.hazard !== 'clear' ? ` ⚠${s.hazard.toUpperCase()}` : '';
-                            addThought(i, 'reason', `Next → ${s.k}${hLabel}. ${Math.hypot(d.group.position.x-d.target.x, d.group.position.z-d.target.z).toFixed(0)}u away.`);
-                            if (s.hazard==='fire') addThought(i, 'danger', `FIRE: 3× drain, slowed to 60%.`);
+                            addThought(i, 'action', `Next → sector ${s.k} [${s.hazard.toUpperCase()}]`);
                             addMCP(i, 'call', 'move_to', {drone_id:`drone_${i+1}`, target_sector:s.k}, {status:'moving', hazard:s.hazard});
-                            addThought(i, 'action', `Navigating to (${d.target.x.toFixed(0)}, ${d.target.z.toFixed(0)})...`);
                         } else {
-                            const scanned = Object.values(sectorMeshes).filter(sec=>sec.scanned).length;
-                            const scannable = Object.values(sectorMeshes).filter(sec=>sec.hazard!=="no_fly").length;
-                            
-                            let isComplete = false;
-                            if (missionGoal === 'scanAll') {
-                                isComplete = (scanned === scannable);
-                            } else {
-                                // Find All Survivors goal: ends if all found OR if all scanned (fallback)
-                                isComplete = (totalFound >= totalSurvivorsInitially) || (scanned === scannable);
-                            }
-
-                            if (isComplete && !missionComplete) {
-                                missionComplete = true;
-                                
-                                // COMMAND ALL DRONES TO RTB IMMEDIATELY
-                                drones.forEach((allD, dIdx) => {
-                                    if (!allD.dead) {
-                                        allD.target = {x:BASE.x, z:BASE.z, sector:null, hazard:"clear"};
-                                        allD.state = "moving";
-                                        addThought(dIdx, 'info', `Mission Objective Met [${missionGoal}]. Returning to base.`);
-                                    }
-                                });
-
-                                const totalTime = formatTime((performance.now() - missionStartTime - totalPausedTime) / 1000);
-                                
-                                addThought(-1, 'phase', 'PHASE 4: MISSION COMPLETE — Summary');
-                                addThought(-1, 'action', 'All units returning to HQ.');
-                                addThought(-1, 'info', `Final Goal Progress: ${missionGoal === 'scanAll' ? (scanned+'/'+scannable+' sectors') : (totalFound+'/'+totalSurvivorsInitially+' survivors')}`);
-                                addThought(i, 'alert', `🎯 MISSION OBJECTIVE REACHED! [Total Time: ${totalTime}]`);
-                                addMCP(i, 'call', 'finalize_mission', {completion_time:totalTime, goal:missionGoal}, {status:'mission_complete'});
-                                
-                                // Show Popup
-                                document.getElementById('final-time').textContent = totalTime;
-                                document.getElementById('final-found').textContent = `${totalFound}/${totalSurvivorsInitially}`;
-                                document.getElementById('final-sectors').textContent = `${scanned}/${scannable}`;
-                                document.getElementById('success-modal').style.display = 'flex';
-                            } else if (scanned < scannable && !missionComplete) {
-                                // Can't afford remaining sectors, RTB to charge so it can help later
-                                d.target = {x:BASE.x, z:BASE.z, sector:null, hazard:"clear"};
-                                d.state = "moving";
-                                addMCP(i, 'call', 'recall_for_charging', {drone_id:`drone_${i+1}`, battery:Math.round(d.battery)}, {status:'returning', target:'base'});
-                            } else {
-                                d.state = "idle";
-                                addThought(i, 'reason', `Awaiting other drones... All assigned sectors covered.`);
-                            }
+                            d.target = {x:BASE.x, z:BASE.z, sector:null, hazard:"clear"};
+                            d.state = "moving";
+                            addThought(i, 'reason', `No sectors affordable. RTB for charging.`);
                         }
                     }
+                } else {
+                    d.state = "moving"; // Returning to base
                 }
             }
         }
 
+
         scanSpheres[i].position.copy(d.group.position);
         d.battery = Math.max(0, d.battery);
     });
-    }
+
 
     // Camera
     // Camera follow
@@ -1682,6 +1788,8 @@ function animate() {
             + `<span class="dl-bat ${batClass}">⚡${d.battery.toFixed(0)}%</span>`
             + (d.dead ? '' : ` <span class="dl-rtb">← RTB: ~${estRTB}%</span>`);
     }
+
+    } // End of if (!isPaused)
 
     renderer.render(scene, cam);
 }
