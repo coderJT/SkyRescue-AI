@@ -36,11 +36,13 @@
         #minimap { width: 260px; height: 260px; border-radius: 4px; border: 1px solid #1a2a1a; }
         #thinking-box {
             background: rgba(10,15,30,0.92); border: 1px solid rgba(255,100,0,0.2);
-            border-radius: 8px; padding: 10px; max-height: 360px; overflow-y: auto;
+            border-radius: 8px; padding: 10px;
         }
-        #thinking-box::-webkit-scrollbar { width: 4px; }
-        #thinking-box::-webkit-scrollbar-thumb { background: #333; border-radius: 2px; }
+        #thoughts-content { max-height: 360px; overflow-y: auto; scrollbar-width: none; -ms-overflow-style: none; }
+        #thoughts-content::-webkit-scrollbar { display: none; }
         #thinking-box h4 { color: #ff8800; font-size: 11px; margin-bottom: 6px; letter-spacing: 1.5px; }
+        .panel-toggle { cursor: pointer; color: #8899aa; margin-right: 5px; font-family: monospace; font-size: 12px; }
+        .panel-toggle:hover { color: #fff; }
         .thought-entry { margin: 4px 0; padding: 5px 7px; border-radius: 4px; font-size: 10px; line-height: 1.4; }
         .thought-entry.reason { background: rgba(180,100,255,0.08); color: #c8a0ff; border-left: 2px solid #8844dd; }
         .thought-entry.action { background: rgba(0,180,255,0.08); color: #66ccff; border-left: 2px solid #0088cc; }
@@ -162,7 +164,7 @@
 </head>
 <body>
 <div id="hud">
-    <div id="title">🔥 Forest Wildfire Rescue</div>
+    <div id="title">Forest Wildfire Rescue</div>
     <div id="cam-panel">
         <button class="cam-btn active" onclick="switchCam(-1)">🌐 Overview <span style="color:#445;font-size:9px">[0]</span></button>
         <button class="cam-btn" onclick="switchCam(0)">🛩 Drone 1 <span style="color:#445;font-size:9px">[1]</span></button>
@@ -171,26 +173,35 @@
         <button class="cam-btn" onclick="switchCam(3)">🛩 Drone 4 <span style="color:#445;font-size:9px">[4]</span></button>
         <button class="cam-btn" onclick="switchCam(4)">🛩 Drone 5 <span style="color:#445;font-size:9px">[5]</span></button>
         <button class="cam-btn" onclick="switchCam(-2)">🗺 World <span style="color:#445;font-size:9px">[6]</span></button>
+        <button class="cam-btn" onclick="switchCam(-3)">🚁 Swarm <span style="color:#445;font-size:9px">[7]</span></button>
     </div>
     <div id="right-panel">
         <div id="minimap-box">
-            <h4>⬡ 2D TACTICAL MAP</h4>
-            <canvas id="minimap" width="260" height="260"></canvas>
+            <h4><span class="panel-toggle" id="toggle-minimap" onclick="togglePanel('minimap-content', 'toggle-minimap')">[-]</span> ⬡ 2D TACTICAL MAP</h4>
+            <div id="minimap-content">
+                <canvas id="minimap" width="260" height="260"></canvas>
+            </div>
         </div>
         <div id="thinking-box">
-            <h4>🧠 CHAIN-OF-THOUGHT <span id="mcp-toggle" onclick="toggleMCP()">MCP OFF</span></h4>
-            <div id="thoughts"></div>
+            <h4><span class="panel-toggle" id="toggle-thoughts" onclick="togglePanel('thoughts-content', 'toggle-thoughts')">[-]</span> 🧠 CHAIN-OF-THOUGHT <span id="mcp-toggle" onclick="toggleMCP()">MCP OFF</span></h4>
+            <div id="thoughts-content">
+                <div id="thoughts"></div>
+            </div>
         </div>
     </div>
     <div id="status">
-        <h3>⬡ MISSION</h3><div id="sc">Initializing...</div>
-        <div id="speed-slider-box">
-            <label>⚡ Speed</label>
-            <input type="range" id="speed-slider" min="5" max="100" value="20" oninput="updateSpeed(this.value)">
-            <span id="speed-val">0.20</span>
-            <button id="pause-btn" onclick="togglePause()" style="background:rgba(255,200,50,0.15);border-color:rgba(255,200,50,0.3);color:#ffd855; padding:3px 10px; border-radius:4px; font-size:10px; cursor:pointer; pointer-events:auto; border-width:1px; border-style:solid; transition:all 0.2s;">⏸ Pause</button>
-            <button id="daynight-btn" onclick="toggleDayNight()">🌙 Night</button>
-            <button id="daynight-btn" onclick="location.reload()" style="background:rgba(255,50,50,0.15);border-color:rgba(255,50,50,0.3);color:#ff6655">↻ Restart</button>
+        <h3><span class="panel-toggle" id="toggle-status" onclick="togglePanel('status-content', 'toggle-status')">[-]</span> ⬡ MISSION</h3>
+        <div id="status-content">
+            <div id="sc">Initializing...</div>
+            <div id="speed-slider-box">
+                <label>⚡ Speed</label>
+                <input type="range" id="speed-slider" min="5" max="100" value="20" oninput="updateSpeed(this.value)">
+                <span id="speed-val">0.20</span>
+                <button id="pause-btn" onclick="togglePause()" style="background:rgba(255,200,50,0.15);border-color:rgba(255,200,50,0.3);color:#ffd855; padding:3px 10px; border-radius:4px; font-size:10px; cursor:pointer; pointer-events:auto; border-width:1px; border-style:solid; transition:all 0.2s;">⏸ Pause</button>
+                <button id="scan-toggle-btn" onclick="toggleScannedSectors()" style="background:rgba(50,150,255,0.15);border-color:rgba(50,150,255,0.3);color:#66bbff; padding:3px 10px; border-radius:4px; font-size:10px; cursor:pointer; pointer-events:auto; border-width:1px; border-style:solid; transition:all 0.2s;">👁 Scanned (H)</button>
+                <button id="daynight-btn" onclick="toggleDayNight()">🌙 Night</button>
+                <button id="daynight-btn" onclick="location.reload()" style="background:rgba(255,50,50,0.15);border-color:rgba(255,50,50,0.3);color:#ff6655">↻ Restart</button>
+            </div>
         </div>
     </div>
     <div id="alert-box">🔥 SURVIVOR DETECTED</div>
@@ -241,10 +252,33 @@ window.togglePause = function() {
     }
 };
 
+window.togglePanel = function(contentId, btnId) {
+    const el = document.getElementById(contentId);
+    const btn = document.getElementById(btnId);
+    if (!el || !btn) return;
+    if (el.style.display === 'none') {
+        el.style.display = 'block';
+        btn.textContent = '[-]';
+    } else {
+        el.style.display = 'none';
+        btn.textContent = '[+]';
+    }
+};
+
 let MOVE_SPEED = 0.2;
 window.updateSpeed = function(v) {
     MOVE_SPEED = v / 100;
     document.getElementById('speed-val').textContent = MOVE_SPEED.toFixed(2);
+};
+
+let showScannedSectors = false;
+window.toggleScannedSectors = function() {
+    showScannedSectors = !showScannedSectors;
+    const btn = document.getElementById('scan-toggle-btn');
+    if (btn) {
+        btn.style.background = showScannedSectors ? 'rgba(50,150,255,0.4)' : 'rgba(50,150,255,0.15)';
+        btn.style.color = showScannedSectors ? '#ffffff' : '#66bbff';
+    }
 };
 const DRAIN_PER_UNIT = 0.06; // battery % drained per unit of distance traveled (clear zone)
 const DRONE_FLY_HEIGHT = 6;
@@ -644,6 +678,24 @@ for (const key of NO_FLY) {
     }
 }
 
+// ─── CENTER CABIN (SURVIVOR SHELTER) ───
+const houseBase = new THREE.Mesh(new THREE.BoxGeometry(6, 4, 8), new THREE.MeshStandardMaterial({color:0x5c4033, roughness:0.9}));
+houseBase.position.set(GRID/2, 2, GRID/2); 
+scene.add(houseBase);
+
+const roofGeometry = new THREE.CylinderGeometry(0, 5, 3, 4, 1);
+roofGeometry.rotateY(Math.PI / 4);
+const houseRoof = new THREE.Mesh(roofGeometry, new THREE.MeshStandardMaterial({color:0x222222, roughness:0.8}));
+houseRoof.position.set(GRID/2, 5.5, GRID/2);
+scene.add(houseRoof);
+
+// Small Chimney
+const chimney = new THREE.Mesh(new THREE.BoxGeometry(1, 4, 1), new THREE.MeshStandardMaterial({color:0x442222}));
+chimney.position.set(GRID/2 - 1.5, 6, GRID/2 - 2);
+scene.add(chimney);
+
+registerObstacle(GRID/2, GRID/2, 4, 7); // Register the house as a solid obstacle
+
 // ─── FIRE EFFECTS ───
 const fireParticles = [];
 for (const key of FIRE) {
@@ -869,7 +921,7 @@ window.startMission = function() {
 window.switchCam = function(idx) {
     activeDrone = idx;
     document.querySelectorAll('.cam-btn').forEach((b,i) => {
-        const btnIdx = i === 0 ? -1 : i <= 5 ? i-1 : -2;
+        let btnIdx = i === 0 ? -1 : i <= 5 ? i-1 : i === 6 ? -2 : -3;
         b.classList.toggle('active', btnIdx === idx);
     });
     // Reset follow tracking so camera re-centers on new drone
@@ -878,18 +930,22 @@ window.switchCam = function(idx) {
     const thinkBox = document.querySelector('#thinking-box h4');
     const mcpBtn = document.getElementById('mcp-toggle');
     const mcpHtml = ` <span id="mcp-toggle" class="${showMCP?'active':''}" onclick="toggleMCP()">${showMCP?'MCP ON':'MCP OFF'}</span>`;
-    thinkBox.innerHTML = (idx >= 0 ? `🧠 ${DRONE_NAMES[idx]} THINKING` : '🧠 CHAIN-OF-THOUGHT (ALL)') + mcpHtml;
+    const isHidden = document.getElementById('thoughts-content').style.display === 'none';
+    const toggleHtml = `<span class="panel-toggle" id="toggle-thoughts" onclick="togglePanel('thoughts-content', 'toggle-thoughts')">${isHidden ? '[+]' : '[-]'}</span> `;
+    thinkBox.innerHTML = toggleHtml + (idx >= 0 ? `🧠 ${DRONE_NAMES[idx]} THINKING` : '🧠 CHAIN-OF-THOUGHT (ALL)') + mcpHtml;
     // Set world view camera
     if (idx === -2) {
-        cam.position.set(GRID/2, 180, GRID/2);
+        cam.position.set(GRID/2, 320, GRID/2 + 20);
         controls.target.set(GRID/2, 0, GRID/2);
     }
 };
 document.addEventListener('keydown', e => {
-    const k = parseInt(e.key);
-    if (k===0) switchCam(-1);
-    else if (k>=1&&k<=5) switchCam(k-1);
-    else if (k===6) switchCam(-2);
+    const k = e.key.toLowerCase();
+    if (k==='0') switchCam(-1);
+    else if (k>='1'&&k<='5') switchCam(parseInt(k)-1);
+    else if (k==='6') switchCam(-2);
+    else if (k==='7') switchCam(-3);
+    else if (k==='h') toggleScannedSectors();
 });
 
 // Manual Drone Kill Function
@@ -967,10 +1023,26 @@ function animate() {
         s.mesh.material.opacity = 0.04 + Math.sin(elapsed*0.4+s.phase)*0.03;
         s.mesh.position.y += Math.sin(elapsed*0.3+s.phase)*0.003;
     });
+
     survivorMeshes.forEach((s,i) => {
         if (!s.found) {
             s.body.position.y = 0.8 + Math.sin(elapsed*1.5+i)*0.3;
             s.ring.scale.setScalar(1 + Math.sin(elapsed*2+i)*0.2);
+        }
+    });
+
+    // Sector Visualization 
+    Object.values(sectorMeshes).forEach(s => {
+        if (s.scanned) {
+            if (showScannedSectors) {
+                s.mesh.material.color.setHex(0x3388ff);
+                s.mesh.material.opacity = 0.35 + Math.sin(elapsed*2+s.mesh.position.x)*0.1;
+                s.mesh.material.emissive.setHex(0x113355);
+            } else {
+                s.mesh.material.color.setHex(0x152215);
+                s.mesh.material.opacity = 0.4;
+                s.mesh.material.emissive.setHex(0x000000);
+            }
         }
     });
 
@@ -984,6 +1056,16 @@ function animate() {
             const last = d.path[d.path.length-1];
             if (!last || Math.hypot(p.x-last.x, p.z-last.z) > 0.8) {
                 d.path.push({x:p.x, z:p.z});
+            }
+        }
+
+        // Wake up idle drones at base if there are unassigned sectors
+        if (d.state === "idle" && !d.recharging && !d.dead && missionStarted && !missionComplete) {
+            const s = getNextSector(d, i);
+            if (s) {
+                d.target = {x:s.c*CELL+CELL/2, z:s.r*CELL+CELL/2, sector:s.k, hazard:s.hazard};
+                d.state = "moving";
+                addThought(i, 'action', `Waking up from standby. Moving to ${s.k}...`);
             }
         }
 
@@ -1171,11 +1253,10 @@ function animate() {
                         addMCP(i, 'call', 'move_to', {drone_id:`drone_${i+1}`, target_sector:s.k}, {status:'moving', hazard:s.hazard});
                         addThought(i, 'action', `Navigating to (${d.target.x.toFixed(0)}, ${d.target.z.toFixed(0)})...`);
                     } else {
-                        d.state = "idle";
-                        // Check if ALL sectors are done
-                        const scanned = Object.values(sectorMeshes).filter(s=>s.scanned).length;
-                        const scannable = Object.values(sectorMeshes).filter(s=>s.hazard!=="no_fly").length;
+                        const scanned = Object.values(sectorMeshes).filter(sec=>sec.scanned).length;
+                        const scannable = Object.values(sectorMeshes).filter(sec=>sec.hazard!=="no_fly").length;
                         if (scanned === scannable && !missionComplete) {
+                            d.state = "idle";
                             missionComplete = true;
                             const totalTime = formatTime((performance.now() - missionStartTime) / 1000);
                             
@@ -1190,7 +1271,13 @@ function animate() {
                             document.getElementById('final-time').textContent = totalTime;
                             document.getElementById('final-found').textContent = `${totalFound}/${SURVIVORS.length}`;
                             document.getElementById('success-modal').style.display = 'flex';
+                        } else if (scanned < scannable) {
+                            // Can't afford remaining sectors, RTB to charge so it can help later
+                            d.target = {x:BASE.x, z:BASE.z, sector:null, hazard:"clear"};
+                            d.state = "moving";
+                            addMCP(i, 'call', 'recall_for_charging', {drone_id:`drone_${i+1}`, battery:Math.round(d.battery)}, {status:'returning', target:'base'});
                         } else {
+                            d.state = "idle";
                             addThought(i, 'reason', `Awaiting other drones... All assigned sectors covered.`);
                         }
                     }
@@ -1218,6 +1305,34 @@ function animate() {
         cam.position.add(delta);
         controls.target.add(delta);
         drones[activeDrone]._lastCamPos.copy(dp);
+    } else if (activeDrone === -3) {
+        // Swarm Group Tracking Camera
+        let minX = Infinity, minZ = Infinity, maxX = -Infinity, maxZ = -Infinity;
+        let activeCount = 0;
+        drones.forEach(d => {
+            if (!d.dead) {
+                minX = Math.min(minX, d.group.position.x);
+                minZ = Math.min(minZ, d.group.position.z);
+                maxX = Math.max(maxX, d.group.position.x);
+                maxZ = Math.max(maxZ, d.group.position.z);
+                activeCount++;
+            }
+        });
+        if (activeCount > 0) {
+            const cx = (minX + maxX) / 2;
+            const cz = (minZ + maxZ) / 2;
+            const span = Math.max(maxX - minX, maxZ - minZ);
+            
+            controls.target.lerp(new THREE.Vector3(cx, 0, cz), 0.05);
+
+            const maxDist = Math.max(40, span * 1.5 + 20); 
+            const desiredCamPos = new THREE.Vector3(cx, maxDist * 0.8, cz + maxDist * 0.5);
+            cam.position.lerp(desiredCamPos, 0.05);
+        } else {
+            // All dead, aim at base
+            controls.target.lerp(new THREE.Vector3(BASE.x, 0, BASE.z), 0.05);
+            cam.position.lerp(new THREE.Vector3(BASE.x, 30, BASE.z + 30), 0.05);
+        }
     }
 
     controls.update();
