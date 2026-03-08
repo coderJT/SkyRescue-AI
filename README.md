@@ -78,7 +78,7 @@ Full Model Context Protocol server with **15 tools** that any MCP client can dis
 ### 🖥️ Immersive 3D Simulation
 
 - **Real-time Three.js visualization** with day/night cycle
-- **8 camera modes** — Follow any drone, world view, or swarm tracking camera
+- **Up to 8 camera modes** — Follow any drone, world view, or swarm tracking camera
 - **Live minimap** with drone paths, targets, and scan coverage
 - **Chain-of-Thought panel** — Watch each drone's reasoning in real-time
 - **MCP Protocol Log** — Toggle to see raw MCP tool calls and responses
@@ -97,40 +97,27 @@ Full Model Context Protocol server with **15 tools** that any MCP client can dis
 │  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐   │
 │  │  Drone 1 │ │  Drone 2 │ │  Drone 3 │ │  Drone N │   │
 │  │  Local   │ │  Local   │ │  Local   │ │  Local   │   │
-│  │  Brain   │ │  Brain   │ │  Brain   │ │  Brain   │   │
+│  │  Brain*  │ │  Brain*  │ │  Brain*  │ │  Brain*  │   │
 │  └────┬─────┘ └────┬─────┘ └────┬─────┘ └────┬─────┘   │
 │       │             │             │             │         │
 │       └─────────────┴──────┬──────┴─────────────┘         │
-│                            │ HTTP/JSON                    │
+│                            │ MCP over SSE                 │
 └────────────────────────────┼──────────────────────────────┘
                              │
               ┌──────────────▼──────────────┐
-              │    LLM Decision Server       │
-              │  (llm_server.py — FastAPI)    │
-              │                              │
-              │  /decide     — Single drone  │
-              │  /decide_batch — Swarm-wide  │
-              │  /health     — Status check  │
-              │  /reset      — New mission   │
-              └──────────────┬───────────────┘
+              │      MCP Server (SSE)       │
+              │  (run_server.py — FastMCP)  │
+              │                             │
+              │  15 discoverable MCP tools  │
+              │  Calls Mistral AI directly  │
+              └──────────────┬──────────────┘
                              │ LangChain
               ┌──────────────▼──────────────┐
               │      Mistral AI (LLM)        │
               │   mistral-large-latest       │
               └─────────────────────────────┘
 
-              ┌─────────────────────────────┐
-              │     MCP Server (stdio)       │
-              │  (mcp_server.py — FastMCP)   │
-              │                              │
-              │  15 discoverable MCP tools   │
-              │  Shared SimulationEngine     │
-              └──────────────┬───────────────┘
-                             │ MCP Protocol
-              ┌──────────────▼──────────────┐
-              │     MCP Client / Agent       │
-              │  (mcp_client.py / CLI agent) │
-              └─────────────────────────────┘
+*\*Local Brain: Heuristic-based autonomous fallback logic running directly in the browser.*
 ```
 
 ---
@@ -143,7 +130,6 @@ vhack-cs3/
 │   ├── simulation.html            # 🖥️  Main 3D simulation (Three.js, ~1800 lines)
 │   └── simulation_engine.py       # ⚙️  Core simulation logic (sectors, hazards, drones)
 ├── agent/
-│   ├── llm_server.py              # 🧠 LLM Decision Engine (FastAPI + Mistral AI)
 │   ├── mcp_client.py              # 🔌 MCP client for tool discovery & invocation
 │   └── command_agent.py           # 🤖 Command-line agent interface
 ├── mcp_app/
@@ -175,17 +161,18 @@ cd vhack-cs3
 pip install fastapi uvicorn langchain-mistralai langchain-core pydantic mcp
 ```
 
-### 2. Start the LLM Decision Server
+### 2. Start the MCP Server (SSE)
 
 ```bash
-# Set your Mistral API key and start the server
-MISTRAL_API_KEY=your_api_key_here python agent/llm_server.py
+# Set your Mistral API key and start the MCP server
+export MISTRAL_API_KEY=your_api_key_here
+python run_server.py
 ```
 
 You should see:
 
 ```
-Starting LLM Server on port 8000...
+Starting MCP Server (SSE transport) on port 8000...
 INFO:     Uvicorn running on http://0.0.0.0:8000
 ```
 
@@ -214,10 +201,13 @@ start simulation/simulation.html
 
 ### 5. (Optional) MCP Inspector
 
+To explore the tools via the inspector, you must point it to the SSE endpoint:
+
 ```bash
-# Launch the MCP Inspector to explore all 15 tools interactively
-npx -y @modelcontextprotocol/inspector python run_server.py
+# Launch the MCP Inspector
+npx -y @modelcontextprotocol/inspector
 ```
+Then in the inspector UI, connect to `http://localhost:8000/sse` using the **SSE** transport option.
 
 ---
 
