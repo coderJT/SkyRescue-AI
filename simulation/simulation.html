@@ -50,6 +50,7 @@
         .thought-entry.alert { background: rgba(118,255,3,0.08); color: #76ff03; border-left: 2px solid #55cc00; }
         .thought-entry.warning { background: rgba(255,170,0,0.08); color: #ffbb33; border-left: 2px solid #cc8800; }
         .thought-entry.danger { background: rgba(255,50,0,0.08); color: #ff6644; border-left: 2px solid #cc2200; }
+        .thought-entry.info { background: rgba(0,255,180,0.08); color: #88eedd; border-left: 2px solid #00aa88; }
         .thought-entry.mcp-call { background: rgba(0,200,180,0.06); color: #44ccbb; border-left: 2px solid #009988; font-family: 'Menlo','Consolas',monospace; font-size: 9px; }
         .thought-entry.mcp-resp { background: rgba(0,200,180,0.04); color: #55aa99; border-left: 2px solid #00776655; font-family: 'Menlo','Consolas',monospace; font-size: 9px; }
         .thought-entry.phase {
@@ -526,7 +527,7 @@ function addThought(droneIdx, type, msg) {
     let reasonPrefix = useLLM ? '🧠 REASONING (LLM): ' : '🧠 REASONING (LOCAL): ';
     const prefixes = {
         'action': '⚡ ACTION: ', 'reason': reasonPrefix, 'danger': '🚫 DANGER: ',
-        'alert': '🔥 ALERT: ', 'warning': '⚠️ WARNING: ', 'info': '   ℹ ', 'phase': ''
+        'alert': '🔥 ALERT: ', 'warning': '⚠️ WARNING: ', 'info': '   i ', 'phase': ''
     };
     const formattedMsg = (prefixes[type] || '') + msg;
 
