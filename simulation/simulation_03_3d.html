@@ -1,0 +1,957 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Forest Wildfire Rescue — 3D Simulation</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { overflow: hidden; background: #0a0a0f; font-family: 'Segoe UI', system-ui, sans-serif; }
+        #hud { position: fixed; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: 10; }
+        #title {
+            position: absolute; top: 12px; left: 50%; transform: translateX(-50%);
+            color: #ff6600; font-size: 15px; font-weight: 700; text-transform: uppercase;
+            letter-spacing: 3px; text-shadow: 0 0 20px rgba(255,100,0,0.5);
+        }
+        #cam-panel {
+            position: absolute; top: 12px; left: 12px;
+            display: flex; flex-direction: column; gap: 4px; pointer-events: auto;
+        }
+        .cam-btn {
+            background: rgba(10,15,30,0.85); border: 1px solid rgba(255,100,0,0.3);
+            color: #8899aa; padding: 6px 12px; border-radius: 5px; cursor: pointer;
+            font-size: 10px; font-family: inherit; transition: all 0.2s; text-align: left;
+        }
+        .cam-btn:hover { background: rgba(255,100,0,0.15); color: #ff8800; border-color: #ff8800; }
+        .cam-btn.active { background: rgba(255,100,0,0.2); color: #ff8800; border-color: #ff8800; box-shadow: 0 0 10px rgba(255,100,0,0.2); }
+        #right-panel {
+            position: absolute; top: 12px; right: 12px; width: 280px;
+            display: flex; flex-direction: column; gap: 8px; pointer-events: auto;
+        }
+        #minimap-box {
+            background: rgba(10,15,30,0.92); border: 1px solid rgba(255,100,0,0.2);
+            border-radius: 8px; padding: 10px;
+        }
+        #minimap-box h4 { color: #ff8800; font-size: 11px; margin-bottom: 6px; letter-spacing: 1.5px; }
+        #minimap { width: 260px; height: 260px; border-radius: 4px; border: 1px solid #1a2a1a; }
+        #thinking-box {
+            background: rgba(10,15,30,0.92); border: 1px solid rgba(255,100,0,0.2);
+            border-radius: 8px; padding: 10px; max-height: 360px; overflow-y: auto;
+        }
+        #thinking-box::-webkit-scrollbar { width: 4px; }
+        #thinking-box::-webkit-scrollbar-thumb { background: #333; border-radius: 2px; }
+        #thinking-box h4 { color: #ff8800; font-size: 11px; margin-bottom: 6px; letter-spacing: 1.5px; }
+        .thought-entry { margin: 4px 0; padding: 5px 7px; border-radius: 4px; font-size: 10px; line-height: 1.4; }
+        .thought-entry.reason { background: rgba(180,100,255,0.08); color: #c8a0ff; border-left: 2px solid #8844dd; }
+        .thought-entry.action { background: rgba(0,180,255,0.08); color: #66ccff; border-left: 2px solid #0088cc; }
+        .thought-entry.alert { background: rgba(118,255,3,0.08); color: #76ff03; border-left: 2px solid #55cc00; }
+        .thought-entry.warning { background: rgba(255,170,0,0.08); color: #ffbb33; border-left: 2px solid #cc8800; }
+        .thought-entry.danger { background: rgba(255,50,0,0.08); color: #ff6644; border-left: 2px solid #cc2200; }
+        .thought-entry.mcp-call { background: rgba(0,200,180,0.06); color: #44ccbb; border-left: 2px solid #009988; font-family: 'Menlo','Consolas',monospace; font-size: 9px; }
+        .thought-entry.mcp-resp { background: rgba(0,200,180,0.04); color: #55aa99; border-left: 2px solid #00776655; font-family: 'Menlo','Consolas',monospace; font-size: 9px; }
+        .thought-drone-tag { font-size: 9px; font-weight: 700; margin-right: 4px; padding: 1px 4px; border-radius: 2px; }
+        #mcp-toggle {
+            display: inline-block; margin-left: 6px; padding: 2px 8px; border-radius: 4px; cursor: pointer;
+            font-size: 9px; font-weight: 600; border: 1px solid #009988; color: #44ccbb;
+            background: rgba(0,153,136,0.1); pointer-events: auto; transition: all 0.2s; vertical-align: middle;
+        }
+        #mcp-toggle:hover { background: rgba(0,153,136,0.25); }
+        #mcp-toggle.active { background: rgba(0,153,136,0.3); box-shadow: 0 0 8px rgba(0,153,136,0.3); }
+        #status {
+            position: absolute; bottom: 12px; left: 12px;
+            background: rgba(10,15,30,0.92); border: 1px solid rgba(255,100,0,0.2);
+            border-radius: 8px; padding: 12px 16px; min-width: 260px; max-height: 220px;
+            overflow-y: auto; color: #ccd; font-size: 11px;
+        }
+        #status h3 { color: #ff8800; margin-bottom: 6px; font-size: 12px; letter-spacing: 2px; }
+        .sr { display: flex; justify-content: space-between; margin: 2px 0; }
+        .sl { color: #556; }
+        .sv { color: #aab; font-weight: 600; }
+        .sv.det { color: #76ff03; }
+        .sv.low { color: #ffaa00; }
+        #alert-box {
+            position: absolute; bottom: 12px; right: 12px;
+            background: rgba(118,255,3,0.12); border: 1px solid rgba(118,255,3,0.4);
+            border-radius: 8px; padding: 10px 14px; color: #76ff03; font-size: 11px;
+            font-weight: 600; display: none; max-width: 200px;
+        }
+        #alert-box.show { display: block; animation: ap 1s infinite; }
+        @keyframes ap { 0%,100%{box-shadow:0 0 8px rgba(118,255,3,0.2)} 50%{box-shadow:0 0 20px rgba(118,255,3,0.4)} }
+        #instr { position: absolute; bottom: 12px; left: 50%; transform: translateX(-50%); color: #334; font-size: 9px; letter-spacing: 1px; }
+        .drone-label {
+            position: absolute; pointer-events: none; z-index: 15;
+            background: rgba(10,15,30,0.88); border: 1px solid rgba(255,140,0,0.4);
+            border-radius: 5px; padding: 4px 8px; font-size: 9px; line-height: 1.4;
+            color: #ccd; font-family: 'Segoe UI', system-ui, sans-serif;
+            white-space: nowrap; transform: translate(-50%, -100%);
+            box-shadow: 0 2px 8px rgba(0,0,0,0.5);
+        }
+        .drone-label .dl-name { font-weight: 700; font-size: 10px; }
+        .drone-label .dl-bat { color: #76ff03; }
+        .drone-label .dl-bat.low { color: #ffaa00; }
+        .drone-label .dl-bat.dead { color: #ff3322; }
+        .drone-label .dl-rtb { color: #66ccff; font-size: 8px; }
+    </style>
+</head>
+<body>
+<div id="hud">
+    <div id="title">🔥 Forest Wildfire Rescue</div>
+    <div id="cam-panel">
+        <button class="cam-btn active" onclick="switchCam(-1)">🌐 Overview <span style="color:#445;font-size:9px">[0]</span></button>
+        <button class="cam-btn" onclick="switchCam(0)">🛩 Drone 1 <span style="color:#445;font-size:9px">[1]</span></button>
+        <button class="cam-btn" onclick="switchCam(1)">🛩 Drone 2 <span style="color:#445;font-size:9px">[2]</span></button>
+        <button class="cam-btn" onclick="switchCam(2)">🛩 Drone 3 <span style="color:#445;font-size:9px">[3]</span></button>
+        <button class="cam-btn" onclick="switchCam(3)">🛩 Drone 4 <span style="color:#445;font-size:9px">[4]</span></button>
+        <button class="cam-btn" onclick="switchCam(4)">🛩 Drone 5 <span style="color:#445;font-size:9px">[5]</span></button>
+    </div>
+    <div id="right-panel">
+        <div id="minimap-box">
+            <h4>⬡ 2D TACTICAL MAP</h4>
+            <canvas id="minimap" width="260" height="260"></canvas>
+        </div>
+        <div id="thinking-box">
+            <h4>🧠 CHAIN-OF-THOUGHT <span id="mcp-toggle" onclick="toggleMCP()">MCP OFF</span></h4>
+            <div id="thoughts"></div>
+        </div>
+    </div>
+    <div id="status"><h3>⬡ MISSION</h3><div id="sc">Initializing...</div></div>
+    <div id="alert-box">🔥 SURVIVOR DETECTED</div>
+    <div id="instr">Press 0-5 to switch cameras · Click+Drag to orbit</div>
+    <div id="drone-label-0" class="drone-label"></div>
+    <div id="drone-label-1" class="drone-label"></div>
+    <div id="drone-label-2" class="drone-label"></div>
+    <div id="drone-label-3" class="drone-label"></div>
+    <div id="drone-label-4" class="drone-label"></div>
+</div>
+
+<script type="importmap">
+{ "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js", "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/" } }
+</script>
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+// ─── CONFIG ───
+const GRID = 200, SECTORS = 10, CELL = GRID / SECTORS;  // 10×10 = each sub-tile is 20×20
+const SCAN_RADIUS = 10, MOVE_SPEED = 0.6;
+const DRAIN_PER_UNIT = 0.06; // battery % drained per unit of distance traveled (clear zone)
+const DRONE_FLY_HEIGHT = 6;
+const OBSTACLE_RADIUS = 1.5;
+const AVOIDANCE_LOOKAHEAD = 6;
+const AVOIDANCE_STRENGTH = 0.7;
+const DRONE_COLORS = ['#3388ff','#ff5533','#33cc55','#ff9900','#cc44ff'];
+const DRONE_NAMES = ['Drone 1','Drone 2','Drone 3','Drone 4','Drone 5'];
+const SURVIVORS = [
+    {x:50,y:0,z:70},{x:100,y:0,z:100},{x:130,y:0,z:110},
+    {x:30,y:0,z:150},{x:160,y:0,z:130},{x:70,y:0,z:170},{x:144,y:0,z:24}
+];
+
+// Hazards defined on original 5×5 macro-grid, expanded to 10×10
+const NO_FLY_MACRO = ["1_1","2_1","0_4","1_4"];
+const FIRE_MACRO   = ["3_2","4_2","2_3","3_3"];
+
+// Expand macro sector (5×5) into 4 sub-sectors (10×10)
+function expandMacro(list) {
+    const s = new Set();
+    for (const key of list) {
+        const [mr,mc] = key.split("_").map(Number);
+        s.add(`${mr*2}_${mc*2}`);
+        s.add(`${mr*2+1}_${mc*2}`);
+        s.add(`${mr*2}_${mc*2+1}`);
+        s.add(`${mr*2+1}_${mc*2+1}`);
+    }
+    return s;
+}
+const NO_FLY = expandMacro(NO_FLY_MACRO);
+const FIRE   = expandMacro(FIRE_MACRO);
+const SMOKE  = new Set();
+for (const f of FIRE) {
+    const [r,c] = f.split("_").map(Number);
+    for (const [dr,dc] of [[-1,0],[1,0],[0,-1],[0,1]]) {
+        const nr=r+dr, nc=c+dc, k=`${nr}_${nc}`;
+        if (nr>=0&&nr<SECTORS&&nc>=0&&nc<SECTORS&&!FIRE.has(k)&&!NO_FLY.has(k)) SMOKE.add(k);
+    }
+}
+function hazardOf(r,c) {
+    const k=`${r}_${c}`;
+    if (NO_FLY.has(k)) return "no_fly";
+    if (FIRE.has(k)) return "fire";
+    if (SMOKE.has(k)) return "smoke";
+    return "clear";
+}
+
+// ─── OBSTACLE REGISTRY (for collision avoidance) ───
+const obstacles = []; // {x, z, radius}
+
+function registerObstacle(x, z, r) {
+    obstacles.push({x, z, radius: r || OBSTACLE_RADIUS});
+}
+
+// ─── THINKING LOG + MCP COMMUNICATIONS ───
+const thoughtLogs = [[], [], [], [], []];
+const MAX_THOUGHTS = 40;
+let showMCP = false;
+
+window.toggleMCP = function() {
+    showMCP = !showMCP;
+    const btn = document.getElementById('mcp-toggle');
+    btn.textContent = showMCP ? 'MCP ON' : 'MCP OFF';
+    btn.classList.toggle('active', showMCP);
+};
+
+function addThought(droneIdx, type, msg) {
+    thoughtLogs[droneIdx].push({ type, msg, time: Date.now(), isMCP: false });
+    if (thoughtLogs[droneIdx].length > MAX_THOUGHTS) thoughtLogs[droneIdx].shift();
+}
+
+function addMCP(droneIdx, callType, toolName, args, response) {
+    const callMsg = `→ call_tool("${toolName}", ${JSON.stringify(args)})`;
+    const respMsg = `← ${JSON.stringify(response)}`;
+    thoughtLogs[droneIdx].push({ type: 'mcp-call', msg: callMsg, time: Date.now(), isMCP: true });
+    thoughtLogs[droneIdx].push({ type: 'mcp-resp', msg: respMsg, time: Date.now()+1, isMCP: true });
+    if (thoughtLogs[droneIdx].length > MAX_THOUGHTS) {
+        thoughtLogs[droneIdx] = thoughtLogs[droneIdx].slice(-MAX_THOUGHTS);
+    }
+}
+
+function renderThoughts() {
+    const el = document.getElementById('thoughts');
+    let entries = [];
+    if (activeDrone >= 0) {
+        entries = thoughtLogs[activeDrone].map(t => ({...t, drone: activeDrone}));
+    } else {
+        for (let i = 0; i < 5; i++) thoughtLogs[i].forEach(t => entries.push({...t, drone: i}));
+        entries.sort((a,b) => a.time - b.time);
+        entries = entries.slice(-MAX_THOUGHTS);
+    }
+    // Filter MCP entries based on toggle
+    if (!showMCP) entries = entries.filter(t => !t.isMCP);
+    let html = '';
+    entries.forEach(t => {
+        const color = DRONE_COLORS[t.drone];
+        const tag = `<span class="thought-drone-tag" style="background:${color}22;color:${color}">D${t.drone+1}</span>`;
+        html += `<div class="thought-entry ${t.type}">${tag}${t.msg}</div>`;
+    });
+    el.innerHTML = html;
+    el.parentElement.scrollTop = el.parentElement.scrollHeight;
+}
+
+// ─── 2D MINIMAP ───
+const mapCanvas = document.getElementById('minimap');
+const mapCtx = mapCanvas.getContext('2d');
+const MAP_W = 260, MAP_H = 260, MAP_PAD = 5;
+const MAP_CELL = (MAP_W - MAP_PAD*2) / SECTORS;
+
+function drawMinimap() {
+    mapCtx.clearRect(0, 0, MAP_W, MAP_H);
+    mapCtx.fillStyle = '#0c0c14';
+    mapCtx.fillRect(0, 0, MAP_W, MAP_H);
+    // Sector tiles
+    for (let r = 0; r < SECTORS; r++) for (let c = 0; c < SECTORS; c++) {
+        const h = hazardOf(r,c), scanned = sectorMeshes[`${r}_${c}`]?.scanned;
+        let fill = '#1a3a1a';
+        if (h === 'no_fly') fill = '#222';
+        else if (h === 'fire') fill = scanned ? '#3a2210' : '#441100';
+        else if (h === 'smoke') fill = scanned ? '#2a2a18' : '#332810';
+        else fill = scanned ? '#1a3a2a' : '#1a2a1a';
+        const x = MAP_PAD + c * MAP_CELL, y = MAP_PAD + r * MAP_CELL;
+        mapCtx.fillStyle = fill;
+        mapCtx.fillRect(x+1, y+1, MAP_CELL-2, MAP_CELL-2);
+        mapCtx.strokeStyle = '#2a3a2a'; mapCtx.lineWidth = 0.5;
+        mapCtx.strokeRect(x+1, y+1, MAP_CELL-2, MAP_CELL-2);
+        if (scanned && h !== 'no_fly') { mapCtx.fillStyle = '#33aa3322'; mapCtx.fillRect(x+1, y+1, MAP_CELL-2, MAP_CELL-2); }
+        if (h === 'no_fly') {
+            mapCtx.strokeStyle = '#55444466'; mapCtx.lineWidth = 1;
+            mapCtx.beginPath();
+            mapCtx.moveTo(x+4, y+4); mapCtx.lineTo(x+MAP_CELL-4, y+MAP_CELL-4);
+            mapCtx.moveTo(x+MAP_CELL-4, y+4); mapCtx.lineTo(x+4, y+MAP_CELL-4);
+            mapCtx.stroke();
+        }
+        if (h === 'fire') { mapCtx.fillStyle = '#ff440066'; mapCtx.font = '12px sans-serif'; mapCtx.fillText('🔥', x+MAP_CELL/2-7, y+MAP_CELL/2+5); }
+    }
+    // Obstacles as tiny dots on the map
+    mapCtx.fillStyle = '#33553322';
+    obstacles.forEach(o => {
+        const ox = MAP_PAD + (o.x / GRID) * (MAP_W - MAP_PAD*2);
+        const oy = MAP_PAD + (o.z / GRID) * (MAP_H - MAP_PAD*2);
+        mapCtx.beginPath(); mapCtx.arc(ox, oy, 1.5, 0, Math.PI*2); mapCtx.fill();
+    });
+    // Survivors
+    SURVIVORS.forEach((s,i) => {
+        const sx = MAP_PAD + (s.x / GRID) * (MAP_W - MAP_PAD*2);
+        const sy = MAP_PAD + (s.z / GRID) * (MAP_H - MAP_PAD*2);
+        mapCtx.beginPath(); mapCtx.arc(sx, sy, 3, 0, Math.PI*2);
+        mapCtx.fillStyle = survivorMeshes[i]?.found ? '#00ff44' : '#ff3300'; mapCtx.fill();
+        if (!survivorMeshes[i]?.found) { mapCtx.beginPath(); mapCtx.arc(sx, sy, 5, 0, Math.PI*2); mapCtx.strokeStyle='#ff440044'; mapCtx.lineWidth=1; mapCtx.stroke(); }
+    });
+    // Drone paths + positions
+    drones.forEach((d, i) => {
+        if (activeDrone >= 0 && activeDrone !== i) return;
+        const color = DRONE_COLORS[i];
+        if (d.path.length > 1) {
+            mapCtx.beginPath(); mapCtx.strokeStyle = color + '66'; mapCtx.lineWidth = 1.2;
+            d.path.forEach((pt, pi) => {
+                const px = MAP_PAD + (pt.x / GRID) * (MAP_W - MAP_PAD*2);
+                const py = MAP_PAD + (pt.z / GRID) * (MAP_H - MAP_PAD*2);
+                if (pi === 0) mapCtx.moveTo(px, py); else mapCtx.lineTo(px, py);
+            });
+            mapCtx.stroke();
+        }
+        const p = d.group.position;
+        const dx2 = MAP_PAD + (p.x / GRID) * (MAP_W - MAP_PAD*2);
+        const dy2 = MAP_PAD + (p.z / GRID) * (MAP_H - MAP_PAD*2);
+        const sr = (SCAN_RADIUS / GRID) * (MAP_W - MAP_PAD*2);
+        mapCtx.beginPath(); mapCtx.arc(dx2, dy2, sr, 0, Math.PI*2); mapCtx.strokeStyle = color+'33'; mapCtx.lineWidth=0.8; mapCtx.stroke();
+        mapCtx.beginPath(); mapCtx.arc(dx2, dy2, 4, 0, Math.PI*2); mapCtx.fillStyle = color; mapCtx.fill();
+        mapCtx.fillStyle='#fff'; mapCtx.font='bold 7px sans-serif'; mapCtx.textAlign='center'; mapCtx.fillText(`${i+1}`, dx2, dy2+2.5);
+    });
+    // Target lines
+    drones.forEach((d, i) => {
+        if (activeDrone >= 0 && activeDrone !== i) return;
+        if (d.target && d.state === 'moving') {
+            const color = DRONE_COLORS[i], p = d.group.position;
+            const dx2 = MAP_PAD + (p.x / GRID) * (MAP_W - MAP_PAD*2);
+            const dy2 = MAP_PAD + (p.z / GRID) * (MAP_H - MAP_PAD*2);
+            const tx = MAP_PAD + (d.target.x / GRID) * (MAP_W - MAP_PAD*2);
+            const ty = MAP_PAD + (d.target.z / GRID) * (MAP_H - MAP_PAD*2);
+            mapCtx.beginPath(); mapCtx.setLineDash([3,3]); mapCtx.strokeStyle=color+'88'; mapCtx.lineWidth=1;
+            mapCtx.moveTo(dx2, dy2); mapCtx.lineTo(tx, ty); mapCtx.stroke(); mapCtx.setLineDash([]);
+        }
+    });
+}
+
+// ─── THREE.JS SCENE ───
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x060810);
+scene.fog = new THREE.FogExp2(0x060810, 0.003);
+const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance" });
+renderer.setSize(innerWidth, innerHeight);
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+document.body.appendChild(renderer.domElement);
+
+const cam = new THREE.PerspectiveCamera(55, innerWidth/innerHeight, 0.1, 1000);
+cam.position.set(100, 140, -30);
+const controls = new OrbitControls(cam, renderer.domElement);
+controls.target.set(100, 0, 100);
+controls.enableDamping = true;
+controls.dampingFactor = 0.05;
+controls.maxPolarAngle = Math.PI / 2.1;
+let activeDrone = -1;
+
+// Lights
+scene.add(new THREE.AmbientLight(0x223344, 0.4));
+const sun = new THREE.DirectionalLight(0xffddaa, 0.6);
+sun.position.set(60, 120, 40);
+sun.castShadow = true;
+sun.shadow.mapSize.set(2048,2048);
+sun.shadow.camera.far = 500;
+sun.shadow.camera.left = sun.shadow.camera.bottom = -250;
+sun.shadow.camera.right = sun.shadow.camera.top = 250;
+scene.add(sun);
+scene.add(new THREE.HemisphereLight(0x112233, 0x221100, 0.25));
+
+// Ground
+const ground = new THREE.Mesh(
+    new THREE.PlaneGeometry(GRID + 20, GRID + 20),
+    new THREE.MeshStandardMaterial({color:0x0f1f0f, roughness:0.95})
+);
+ground.rotation.x = -Math.PI/2; ground.position.set(GRID/2, -0.01, GRID/2);
+ground.receiveShadow = true; scene.add(ground);
+
+// Sector tiles
+const sectorMeshes = {};
+for (let r=0;r<SECTORS;r++) for (let c=0;c<SECTORS;c++) {
+    const h = hazardOf(r,c);
+    let color = 0x0f2f0f;
+    if (h==="fire") color = 0x2a0800;
+    else if (h==="smoke") color = 0x1a1508;
+    else if (h==="no_fly") color = 0x111111;
+    const geo = new THREE.PlaneGeometry(CELL-0.5, CELL-0.5);
+    const mat = new THREE.MeshStandardMaterial({color, roughness:0.9, transparent:true, opacity:0.6});
+    const mesh = new THREE.Mesh(geo, mat);
+    mesh.rotation.x = -Math.PI/2; mesh.position.set(c*CELL+CELL/2, 0.02, r*CELL+CELL/2);
+    mesh.receiveShadow = true; scene.add(mesh);
+    sectorMeshes[`${r}_${c}`] = {mesh, hazard:h, scanned:false};
+    const edges = new THREE.EdgesGeometry(geo);
+    const line = new THREE.LineSegments(edges, new THREE.LineBasicMaterial({color:0x223322, transparent:true, opacity:0.2}));
+    line.rotation.x = -Math.PI/2; line.position.copy(mesh.position); line.position.y=0.03; scene.add(line);
+}
+
+// ─── TREE GENERATION ───
+// Trees across ALL sectors with density varying by hazard type
+const treeMaterials = {
+    trunk: new THREE.MeshStandardMaterial({color:0x3a2515, roughness:0.9}),
+    trunkBurned: new THREE.MeshStandardMaterial({color:0x1a1a1a, roughness:0.95}),
+    canopyDark: new THREE.MeshStandardMaterial({color:0x0a3a0a, roughness:0.7}),
+    canopyMed: new THREE.MeshStandardMaterial({color:0x154a15, roughness:0.75}),
+    canopyLight: new THREE.MeshStandardMaterial({color:0x1a5a1a, roughness:0.8}),
+    canopySmoke: new THREE.MeshStandardMaterial({color:0x2a3a1a, roughness:0.8}),
+    canopyBurned: new THREE.MeshStandardMaterial({color:0x222200, roughness:0.9, transparent:true, opacity:0.4}),
+};
+
+function spawnTree(cx, cz, tall, burned) {
+    const trunkH = tall ? 10 + Math.random()*8 : 6 + Math.random()*5;
+    const trunkR = 0.25 + Math.random()*0.25;
+    const trunk = new THREE.Mesh(
+        new THREE.CylinderGeometry(trunkR*0.7, trunkR, trunkH, 6),
+        burned ? treeMaterials.trunkBurned : treeMaterials.trunk
+    );
+    trunk.position.set(cx, trunkH/2, cz);
+    trunk.castShadow = true;
+    scene.add(trunk);
+    registerObstacle(cx, cz, 1.0);
+
+    if (!burned) {
+        const canopyR = 2 + Math.random()*2.5;
+        const mats = [treeMaterials.canopyDark, treeMaterials.canopyMed, treeMaterials.canopyLight];
+        const canopy = new THREE.Mesh(
+            new THREE.SphereGeometry(canopyR, 7, 7),
+            mats[Math.floor(Math.random()*mats.length)]
+        );
+        canopy.position.set(cx + (Math.random()-0.5)*1.5, trunkH + canopyR*0.4, cz + (Math.random()-0.5)*1.5);
+        canopy.castShadow = true;
+        scene.add(canopy);
+        // Second smaller canopy cluster for density
+        if (Math.random() > 0.4) {
+            const c2 = new THREE.Mesh(
+                new THREE.SphereGeometry(canopyR*0.65, 6, 6),
+                mats[Math.floor(Math.random()*mats.length)]
+            );
+            c2.position.set(cx + (Math.random()-0.5)*3, trunkH - 1 + Math.random()*2, cz + (Math.random()-0.5)*3);
+            c2.castShadow = true;
+            scene.add(c2);
+        }
+    } else {
+        // Burned tree — sparse dead canopy
+        if (Math.random() > 0.5) {
+            const canopy = new THREE.Mesh(
+                new THREE.SphereGeometry(1.5 + Math.random(), 5, 5),
+                treeMaterials.canopyBurned
+            );
+            canopy.position.set(cx, trunkH + 0.5, cz);
+            scene.add(canopy);
+        }
+    }
+}
+
+for (let r=0; r<SECTORS; r++) for (let c=0; c<SECTORS; c++) {
+    const h = hazardOf(r,c);
+    const cx0 = c*CELL, cz0 = r*CELL;
+    let treeCount;
+    if (h === 'no_fly') treeCount = 5 + Math.floor(Math.random()*3);
+    else if (h === 'smoke') treeCount = 1 + Math.floor(Math.random()*2);
+    else if (h === 'fire') treeCount = 1 + Math.floor(Math.random()*1);
+    else treeCount = 1 + Math.floor(Math.random()*2);
+
+    for (let t=0; t<treeCount; t++) {
+        const tx = cx0 + 2 + Math.random()*(CELL-4);
+        const tz = cz0 + 2 + Math.random()*(CELL-4);
+        const tall = (h === 'no_fly' || h === 'clear') ? true : false;
+        const burned = (h === 'fire');
+        spawnTree(tx, tz, tall, burned);
+    }
+}
+
+// ─── NO-FLY ZONE EXTRA OBSTACLES (rocks/boulders) ───
+for (const key of NO_FLY) {
+    const [r,c] = key.split("_").map(Number);
+    const cx = c*CELL+CELL/2, cz = r*CELL+CELL/2;
+    // Add rocks in some no-fly sub-sectors
+    if (c >= 2 && c <= 3) {
+        for (let i=0;i<3;i++) {
+            const w=2+Math.random()*4, h=4+Math.random()*8, dd=2+Math.random()*4;
+            const rock = new THREE.Mesh(new THREE.BoxGeometry(w,h,dd), new THREE.MeshStandardMaterial({color:0x444433,roughness:0.95}));
+            const rx = cx-6+Math.random()*12, rz = cz-6+Math.random()*12;
+            rock.position.set(rx, h/2, rz);
+            rock.rotation.set(Math.random()*0.2, Math.random()*Math.PI, Math.random()*0.2);
+            rock.castShadow = true; scene.add(rock);
+            registerObstacle(rx, rz, Math.max(w,dd)/2 + 0.5);
+        }
+    }
+}
+
+// ─── FIRE EFFECTS ───
+const fireParticles = [];
+for (const key of FIRE) {
+    const [r,c] = key.split("_").map(Number);
+    const cx = c*CELL+CELL/2, cz = r*CELL+CELL/2;
+    const fl = new THREE.PointLight(0xff4400, 1.5, 25); fl.position.set(cx, 5, cz); scene.add(fl);
+    for (let i=0;i<6;i++) {
+        const flame = new THREE.Mesh(
+            new THREE.ConeGeometry(0.3+Math.random()*0.8, 1.5+Math.random()*4, 5),
+            new THREE.MeshBasicMaterial({color: new THREE.Color().setHSL(0.04+Math.random()*0.06,1,0.45+Math.random()*0.15), transparent:true, opacity:0.75})
+        );
+        flame.position.set(cx-CELL/2+Math.random()*CELL, 0.5+Math.random()*2, cz-CELL/2+Math.random()*CELL);
+        scene.add(flame);
+        fireParticles.push({mesh:flame, baseY:flame.position.y, speed:1+Math.random()*3, phase:Math.random()*6.28});
+    }
+}
+
+// Smoke
+const smokePlanes = [];
+for (const key of SMOKE) {
+    const [r,c] = key.split("_").map(Number);
+    const cx = c*CELL+CELL/2, cz = r*CELL+CELL/2;
+    for (let layer=0;layer<2;layer++) {
+        const p = new THREE.Mesh(
+            new THREE.PlaneGeometry(CELL*0.9, CELL*0.9),
+            new THREE.MeshBasicMaterial({color:0x886644, transparent:true, opacity:0.06, side:THREE.DoubleSide})
+        );
+        p.rotation.x = -Math.PI/2; p.position.set(cx, 3+layer*3, cz);
+        scene.add(p);
+        smokePlanes.push({mesh:p, phase:Math.random()*6.28});
+    }
+}
+
+// Survivors
+const survivorMeshes = [];
+SURVIVORS.forEach((s,i) => {
+    const mesh = new THREE.Mesh(new THREE.SphereGeometry(0.8,12,12), new THREE.MeshStandardMaterial({color:0xff2200, emissive:0xff3300, emissiveIntensity:0.7, roughness:0.3}));
+    mesh.position.set(s.x, 0.8, s.z); mesh.castShadow=true; scene.add(mesh);
+    const ring = new THREE.Mesh(new THREE.TorusGeometry(1.4,0.08,8,24), new THREE.MeshBasicMaterial({color:0xff4400, transparent:true, opacity:0.3}));
+    ring.rotation.x = -Math.PI/2; ring.position.set(s.x, 0.2, s.z); scene.add(ring);
+    const light = new THREE.PointLight(0xff3300, 0.8, 8); light.position.set(s.x, 2, s.z); scene.add(light);
+    survivorMeshes.push({body:mesh, ring, light, found:false});
+});
+
+// ─── OBSTACLE AVOIDANCE (repulsive force field + stuck escape) ───
+function computeAvoidanceSteer(pos, desiredDir) {
+    let steerX = 0, steerZ = 0;
+    let nearestDist = Infinity;
+    for (const obs of obstacles) {
+        const dx = obs.x - pos.x, dz = obs.z - pos.z;
+        const dist = Math.sqrt(dx*dx + dz*dz);
+        const safeZone = obs.radius + 2;  // how close is "too close"
+        if (dist < AVOIDANCE_LOOKAHEAD + safeZone && dist > 0.01) {
+            if (dist < nearestDist) nearestDist = dist;
+            // Repulsive force: push AWAY from obstacle, stronger when closer
+            const urgency = Math.max(0, 1 - dist / (AVOIDANCE_LOOKAHEAD + safeZone));
+            const repelX = -(dx/dist) * urgency * urgency;
+            const repelZ = -(dz/dist) * urgency * urgency;
+            steerX += repelX;
+            steerZ += repelZ;
+        }
+    }
+    return {x: steerX, z: steerZ, blocked: nearestDist < 3.5};
+}
+
+// ─── DRONES ───
+const drones = [];
+const scanSpheres = [];
+const BASE = {x: 5, z: 5};
+const PATH_SAMPLE_INTERVAL = 5;
+let frameCount = 0;
+
+for (let i=0;i<5;i++) {
+    const g = new THREE.Group();
+    const cHex = parseInt(DRONE_COLORS[i].slice(1), 16);
+    const body = new THREE.Mesh(
+        new THREE.BoxGeometry(1.2,0.35,1.2),
+        new THREE.MeshStandardMaterial({color:cHex, metalness:0.7, roughness:0.2, emissive:cHex, emissiveIntensity:0.3})
+    );
+    body.castShadow=true; g.add(body);
+    const rotors = [];
+    for (const [ax,az] of [[1,1],[-1,1],[1,-1],[-1,-1]]) {
+        const rotor = new THREE.Mesh(new THREE.CylinderGeometry(0.45,0.45,0.03,10), new THREE.MeshBasicMaterial({color:0x88ccff, transparent:true, opacity:0.35}));
+        rotor.position.set(ax*0.9, 0.25, az*0.9); g.add(rotor); rotors.push(rotor);
+    }
+    // Drone headlight
+    const hl = new THREE.SpotLight(cHex, 1.5, 15, Math.PI/6, 0.5);
+    hl.position.set(0, -0.2, 0.8);
+    hl.target.position.set(0, -3, 4);
+    g.add(hl); g.add(hl.target);
+    const dl = new THREE.PointLight(cHex, 0.5, 5); dl.position.set(0,-0.3,0); g.add(dl);
+    g.position.set(BASE.x + i*2, DRONE_FLY_HEIGHT, BASE.z + i*2);
+    scene.add(g);
+    const scanMesh = new THREE.Mesh(
+        new THREE.SphereGeometry(SCAN_RADIUS,16,16),
+        new THREE.MeshBasicMaterial({color:0x0066ff, transparent:true, opacity:0.04, wireframe:true})
+    );
+    scanMesh.position.copy(g.position); scene.add(scanMesh);
+    scanSpheres.push(scanMesh);
+
+    drones.push({
+        group: g, rotors, light: dl, battery: 100,
+        target: null, state: "idle", scanTimer: 0, recharging: false,
+        path: [{x: g.position.x, z: g.position.z}],
+        sectorsScanned: 0, avoidCount: 0,
+        // Stuck detection + bypass
+        stuckCheck: {x: g.position.x, z: g.position.z, frame: 0},
+        bypassFrames: 0,
+        dead: false,
+    });
+}
+
+// Remove obstacles near base so drones never get stuck at spawn
+for (let oi = obstacles.length - 1; oi >= 0; oi--) {
+    if (Math.hypot(obstacles[oi].x - BASE.x, obstacles[oi].z - BASE.z) < 15) {
+        obstacles.splice(oi, 1);
+    }
+}
+
+// Sector queue
+const globalQueue = [];
+for (let r=0;r<SECTORS;r++) for (let c=0;c<SECTORS;c++) {
+    const k=`${r}_${c}`;
+    if (!NO_FLY.has(k)) globalQueue.push({r,c,k,hazard:hazardOf(r,c)});
+}
+globalQueue.sort((a,b) => {
+    const pa = a.hazard==="fire"?0:a.hazard==="smoke"?1:2;
+    const pb = b.hazard==="fire"?0:b.hazard==="smoke"?1:2;
+    return pa-pb || Math.hypot(a.c*CELL+CELL/2-GRID/2,a.r*CELL+CELL/2-GRID/2) - Math.hypot(b.c*CELL+CELL/2-GRID/2,b.r*CELL+CELL/2-GRID/2);
+});
+let queueIdx = 0;
+function getNextSector() {
+    while (queueIdx < globalQueue.length) {
+        const s = globalQueue[queueIdx++];
+        if (!sectorMeshes[s.k].scanned) return s;
+    }
+    return null;
+}
+
+// Assign initial targets
+drones.forEach((d,i) => {
+    const s = getNextSector();
+    if (s) {
+        d.target = {x: s.c*CELL+CELL/2, z: s.r*CELL+CELL/2, sector: s.k, hazard: s.hazard};
+        d.state = "moving";
+        const hLabel = s.hazard !== 'clear' ? ` ⚠${s.hazard.toUpperCase()}` : '';
+        addMCP(i, 'call', 'get_fleet_status', {}, {drone_id:`drone_${i+1}`, battery:100, status:'active'});
+        addMCP(i, 'call', 'get_hazard_map', {sector:s.k}, {hazard:s.hazard, scannable:true});
+        addThought(i, 'reason', `Assigned → sector ${s.k}${hLabel}. Est. distance: ${Math.hypot(d.group.position.x-d.target.x, d.group.position.z-d.target.z).toFixed(0)}u`);
+        if (s.hazard === 'fire') addThought(i, 'danger', `FIRE ZONE — 3× drain. High rescue priority.`);
+        addMCP(i, 'call', 'move_to', {drone_id:`drone_${i+1}`, x:d.target.x, z:d.target.z}, {status:'moving', target:s.k});
+        addThought(i, 'action', `Navigating through forest to (${d.target.x.toFixed(0)}, ${d.target.z.toFixed(0)})...`);
+    }
+});
+
+// Camera
+window.switchCam = function(idx) {
+    activeDrone = idx;
+    document.querySelectorAll('.cam-btn').forEach((b,i) => b.classList.toggle('active', i===idx+1));
+    controls.enabled = (idx === -1);
+    const thinkBox = document.querySelector('#thinking-box h4');
+    const mcpBtn = document.getElementById('mcp-toggle');
+    const mcpHtml = ` <span id="mcp-toggle" class="${showMCP?'active':''}" onclick="toggleMCP()">${showMCP?'MCP ON':'MCP OFF'}</span>`;
+    thinkBox.innerHTML = (idx >= 0 ? `🧠 ${DRONE_NAMES[idx]} THINKING` : '🧠 CHAIN-OF-THOUGHT (ALL)') + mcpHtml;
+};
+document.addEventListener('keydown', e => {
+    const k = parseInt(e.key);
+    if (k===0) switchCam(-1);
+    else if (k>=1&&k<=5) switchCam(k-1);
+});
+
+// Status
+let totalFound = 0;
+function updateStatus() {
+    let h = '';
+    const scanned = Object.values(sectorMeshes).filter(s=>s.scanned).length;
+    const scannable = Object.values(sectorMeshes).filter(s=>s.hazard!=="no_fly").length;
+    h += `<div class="sr"><span class="sl">Coverage</span><span class="sv">${scanned}/${scannable}</span></div>`;
+    h += `<div class="sr"><span class="sl">Survivors</span><span class="sv det">${totalFound}/${SURVIVORS.length}</span></div>`;
+    h += `<div class="sr"><span class="sl">Obstacles</span><span class="sv">${obstacles.length} tracked</span></div>`;
+    h += '<hr style="border-color:#222;margin:4px 0">';
+    drones.forEach((d,i) => {
+        const batClass = d.battery < 25 ? 'low' : d.dead ? 'dead' : '';
+        const st = d.dead ? '💀' : d.recharging ? '🔋' : d.state==='scanning' ? '📡' : d.state==='moving' ? '→' : '✅';
+        const bp = d.bypassFrames > 0 ? ' ⚡' : '';
+        h += `<div class="sr"><span class="sl" style="color:${DRONE_COLORS[i]}">${st} D${i+1}${bp}</span><span class="sv ${batClass}">${d.battery.toFixed(0)}%</span></div>`;
+    });
+    document.getElementById('sc').innerHTML = h;
+    document.getElementById('alert-box').classList.toggle('show', totalFound > 0);
+}
+
+// Survivor detection
+function checkSurvivorsNearDrone(d, droneIdx) {
+    const p = d.group.position;
+    SURVIVORS.forEach((s, si) => {
+        if (!survivorMeshes[si].found) {
+            const sd = Math.hypot(s.x - p.x, s.z - p.z);
+            if (sd <= SCAN_RADIUS) {
+                survivorMeshes[si].found = true;
+                survivorMeshes[si].body.material.color.setHex(0x00ff44);
+                survivorMeshes[si].body.material.emissive.setHex(0x00ff44);
+                survivorMeshes[si].light.color.setHex(0x00ff44);
+                scanSpheres[droneIdx].material.color.setHex(0x76ff03);
+                scanSpheres[droneIdx].material.opacity = 0.12;
+                totalFound++;
+                addMCP(droneIdx, 'call', 'thermal_scan', {drone_id:`drone_${droneIdx+1}`, x:s.x, z:s.z}, {survivor_found:true, location:[s.x,s.z], total_found:totalFound});
+                addThought(droneIdx, 'alert', `🔥 SURVIVOR DETECTED at (${s.x}, ${s.z})! Marking for rescue.`);
+            }
+        }
+    });
+}
+
+// ─── ANIMATION LOOP ───
+const clock = new THREE.Clock();
+let elapsed = 0;
+
+function animate() {
+    requestAnimationFrame(animate);
+    const dt = clock.getDelta();
+    elapsed += dt;
+    frameCount++;
+
+    // Fire animation
+    fireParticles.forEach(f => {
+        f.mesh.position.y = f.baseY + Math.sin(elapsed*f.speed+f.phase)*1.8;
+        f.mesh.scale.setScalar(0.6 + Math.sin(elapsed*f.speed*2+f.phase)*0.4);
+        f.mesh.material.opacity = 0.35 + Math.sin(elapsed*3+f.phase)*0.35;
+    });
+    smokePlanes.forEach(s => {
+        s.mesh.material.opacity = 0.04 + Math.sin(elapsed*0.4+s.phase)*0.03;
+        s.mesh.position.y += Math.sin(elapsed*0.3+s.phase)*0.003;
+    });
+    survivorMeshes.forEach((s,i) => {
+        if (!s.found) {
+            s.body.position.y = 0.8 + Math.sin(elapsed*1.5+i)*0.3;
+            s.ring.scale.setScalar(1 + Math.sin(elapsed*2+i)*0.2);
+        }
+    });
+
+    // Update drones
+    drones.forEach((d,i) => {
+        d.rotors.forEach(r => r.rotation.y += dt * 30);
+
+        // Record path
+        if (frameCount % PATH_SAMPLE_INTERVAL === 0 && (d.state==='moving'||d.state==='scanning')) {
+            const p = d.group.position;
+            const last = d.path[d.path.length-1];
+            if (!last || Math.hypot(p.x-last.x, p.z-last.z) > 0.8) {
+                d.path.push({x:p.x, z:p.z});
+            }
+        }
+
+        // Skip dead drones
+        if (d.dead) {
+            scanSpheres[i].visible = false;
+            return;
+        }
+
+        if (d.recharging) {
+            d.battery = Math.min(100, d.battery + dt * 25);
+            if (d.battery >= 100) {
+                d.recharging = false;
+                addThought(i, 'action', `Recharged to 100%. Ready for deployment.`);
+                const s = getNextSector();
+                if (s) {
+                    d.target = {x:s.c*CELL+CELL/2, z:s.r*CELL+CELL/2, sector:s.k, hazard:s.hazard};
+                    d.state = "moving";
+                    addThought(i, 'reason', `Resuming mission → sector ${s.k}. Battery: 100%.`);
+                } else { d.state = "idle"; addThought(i, 'reason', `All sectors covered.`); }
+            }
+            d.group.position.y = 3 + Math.sin(elapsed*2+i)*0.15;
+            scanSpheres[i].position.copy(d.group.position);
+            return;
+        }
+
+        if (d.state === "moving" && d.target) {
+            const p = d.group.position;
+            const dx = d.target.x - p.x, dz = d.target.z - p.z;
+            const dist = Math.sqrt(dx*dx + dz*dz);
+
+            if (dist > 0.5) {
+                const baseSpd = MOVE_SPEED * (d.target.hazard==="fire"?0.6:1);
+                let dirX = dx/dist, dirZ = dz/dist;
+
+                // Bypass countdown
+                if (d.bypassFrames > 0) {
+                    d.bypassFrames--;
+                    // In bypass mode: fly straight, ignore obstacles
+                } else {
+                    // Normal mode: apply obstacle avoidance
+                    const steer = computeAvoidanceSteer(p, {x:dirX, z:dirZ});
+                    dirX += steer.x * 1.5;
+                    dirZ += steer.z * 1.5;
+
+                    if (steer.blocked && d.avoidCount % 120 === 0) {
+                        addThought(i, 'warning', `Obstacle nearby — adjusting course...`);
+                    }
+                    if (steer.x !== 0 || steer.z !== 0) d.avoidCount++;
+                    else d.avoidCount = 0;
+                }
+
+                // STUCK DETECTION: every 60 frames, check progress
+                if (frameCount - d.stuckCheck.frame > 60) {
+                    const moved = Math.hypot(p.x - d.stuckCheck.x, p.z - d.stuckCheck.z);
+                    if (moved < 2 && d.state === 'moving') {
+                        // STUCK! Activate bypass mode — fly straight for 60 frames
+                        d.bypassFrames = 60;
+                        addThought(i, 'danger', `STUCK — engaging direct-flight bypass for ${d.bypassFrames} frames...`);
+                    }
+                    d.stuckCheck = {x: p.x, z: p.z, frame: frameCount};
+                }
+
+                // Normalize direction
+                const len = Math.sqrt(dirX*dirX + dirZ*dirZ) || 1;
+                dirX /= len; dirZ /= len;
+
+                // Move
+                p.x += dirX * baseSpd;
+                p.z += dirZ * baseSpd;
+                p.y = DRONE_FLY_HEIGHT + Math.sin(elapsed*2.5+i)*0.4;
+
+                const lookTarget = new THREE.Vector3(p.x + dirX*3, p.y, p.z + dirZ*3);
+                d.group.lookAt(lookTarget);
+
+                // Battery drain — proportional to distance moved (frame-rate independent)
+                const mult = d.target.hazard==="fire"?3:d.target.hazard==="smoke"?1.5:1;
+                d.battery -= baseSpd * DRAIN_PER_UNIT * mult;
+
+                // Check for death — battery depleted in field
+                if (d.battery <= 0) {
+                    d.battery = 0; d.dead = true; d.state = 'idle';
+                    d.group.position.y = 0.5; // crash to ground
+                    d.group.children[0].material.color.setHex(0x330000);
+                    d.group.children[0].material.emissive.setHex(0x110000);
+                    addThought(i, 'danger', `⚠️ BATTERY DEPLETED — drone down at (${d.group.position.x.toFixed(0)}, ${d.group.position.z.toFixed(0)})!`);
+                    addMCP(i, 'call', 'report_drone_loss', {drone_id:`drone_${i+1}`, location:[Math.round(d.group.position.x), Math.round(d.group.position.z)]}, {status:'crashed', battery:0});
+                    return;
+                }
+
+                // Smart RTB: estimate battery needed to return (same formula + 40% path overhead + margin)
+                const distToBase = Math.hypot(d.group.position.x - BASE.x, d.group.position.z - BASE.z);
+                const batteryToReturn = distToBase * DRAIN_PER_UNIT * 1.4 + 8;
+                if (d.battery < batteryToReturn && d.target.sector) {
+                    addThought(i, 'danger', `Battery ${d.battery.toFixed(0)}% — est. ${batteryToReturn.toFixed(0)}% needed to RTB. Returning NOW!`);
+                    d.target = {x:BASE.x, z:BASE.z, sector:null, hazard:"clear"};
+                    d.state = "moving";
+                    addMCP(i, 'call', 'recall_for_charging', {drone_id:`drone_${i+1}`, battery:Math.round(d.battery), est_rtb_cost:Math.round(batteryToReturn)}, {status:'returning', target:'base'});
+                }
+
+                checkSurvivorsNearDrone(d, i);
+            } else {
+                if (d.target.sector) {
+                    d.state = "scanning"; d.scanTimer = 0;
+                    addMCP(i, 'call', 'thermal_scan', {drone_id:`drone_${i+1}`, sector:d.target.sector}, {status:'scanning', radius:SCAN_RADIUS});
+                    addThought(i, 'action', `Reached sector ${d.target.sector}. Deploying thermal scan (radius: ${SCAN_RADIUS}u)...`);
+                } else {
+                    d.recharging = true; d.state = "idle";
+                    addMCP(i, 'call', 'recall_for_charging', {drone_id:`drone_${i+1}`}, {status:'charging', base:[BASE.x,BASE.z]});
+                    addThought(i, 'action', `At base. Charging...`);
+                }
+            }
+        }
+
+        if (d.state === "scanning") {
+            d.scanTimer += dt;
+            d.group.position.y = DRONE_FLY_HEIGHT + Math.sin(elapsed*4)*0.4;
+            // Rotate while scanning
+            d.group.rotation.y += dt * 0.8;
+            scanSpheres[i].material.color.setHex(0x00ff88);
+            scanSpheres[i].material.opacity = 0.06 + Math.sin(elapsed*5)*0.04;
+
+            if (d.scanTimer > 2.0) {
+                if (d.target && d.target.sector) {
+                    sectorMeshes[d.target.sector].scanned = true;
+                    sectorMeshes[d.target.sector].mesh.material.color.setHex(0x152215);
+                    sectorMeshes[d.target.sector].mesh.material.opacity = 0.4;
+                    checkSurvivorsNearDrone(d, i);
+                    d.sectorsScanned++;
+                    addMCP(i, 'call', 'scan_sector', {drone_id:`drone_${i+1}`, sector:d.target.sector}, {scanned:true, survivors_in_range: survivorMeshes.filter(s=>s.found).length});
+                    addThought(i, 'reason', `Scan done: ${d.target.sector}. Bat: ${d.battery.toFixed(0)}%. Total: ${d.sectorsScanned} sectors.`);
+                }
+                d.battery -= 1.0; // scan cost
+                scanSpheres[i].material.color.setHex(0x0066ff);
+                scanSpheres[i].material.opacity = 0.04;
+
+                // Check for death during scan
+                if (d.battery <= 0) {
+                    d.battery = 0; d.dead = true; d.state = 'idle';
+                    d.group.position.y = 0.5;
+                    d.group.children[0].material.color.setHex(0x330000);
+                    d.group.children[0].material.emissive.setHex(0x110000);
+                    addThought(i, 'danger', `⚠️ BATTERY DEPLETED during scan — drone down!`);
+                    return;
+                }
+
+                // Smart RTB check (same formula as movement RTB)
+                const distToBase2 = Math.hypot(d.group.position.x - BASE.x, d.group.position.z - BASE.z);
+                const batteryToReturn2 = distToBase2 * DRAIN_PER_UNIT * 1.4 + 8;
+                if (d.battery < batteryToReturn2) {
+                    addThought(i, 'danger', `Battery LOW: ${d.battery.toFixed(0)}%! RTB immediately.`);
+                    d.target = {x:BASE.x, z:BASE.z, sector:null, hazard:"clear"};
+                    d.state = "moving";
+                    addMCP(i, 'call', 'recall_for_charging', {drone_id:`drone_${i+1}`, battery:Math.round(d.battery)}, {status:'returning', target:'base'});
+                } else {
+                    const s = getNextSector();
+                    if (s) {
+                        d.target = {x:s.c*CELL+CELL/2, z:s.r*CELL+CELL/2, sector:s.k, hazard:s.hazard};
+                        d.state = "moving";
+                        const hLabel = s.hazard !== 'clear' ? ` ⚠${s.hazard.toUpperCase()}` : '';
+                        addThought(i, 'reason', `Next → ${s.k}${hLabel}. ${Math.hypot(d.group.position.x-d.target.x, d.group.position.z-d.target.z).toFixed(0)}u away.`);
+                        if (s.hazard==='fire') addThought(i, 'danger', `FIRE: 3× drain, slowed to 60%.`);
+                        addMCP(i, 'call', 'move_to', {drone_id:`drone_${i+1}`, target_sector:s.k}, {status:'moving', hazard:s.hazard});
+                        addThought(i, 'action', `Navigating to (${d.target.x.toFixed(0)}, ${d.target.z.toFixed(0)})...`);
+                    } else {
+                        d.state = "idle";
+                        addThought(i, 'alert', `All sectors covered. Mission complete! 🎯`);
+                    }
+                }
+            }
+        }
+
+        scanSpheres[i].position.copy(d.group.position);
+        d.battery = Math.max(0, d.battery);
+    });
+
+    // Camera
+    if (activeDrone >= 0 && activeDrone < drones.length) {
+        const dp = drones[activeDrone].group.position;
+        const off = new THREE.Vector3(-6, 8, -6);
+        cam.position.lerp(new THREE.Vector3(dp.x+off.x, dp.y+off.y, dp.z+off.z), 0.06);
+        cam.lookAt(dp);
+        controls.target.set(dp.x, dp.y, dp.z);
+    }
+
+    controls.update();
+    updateStatus();
+    drawMinimap();
+    renderThoughts();
+
+    // Update drone overlay labels
+    drones.forEach((d, i) => {
+        const label = document.getElementById(`drone-label-${i}`);
+        if (!label) return;
+        // Only show in overview mode
+        if (activeDrone >= 0) { label.style.display = 'none'; return; }
+        label.style.display = 'block';
+
+        // Project 3D position to screen
+        const pos3 = d.group.position.clone();
+        pos3.y += 4; // above the drone
+        pos3.project(cam);
+        const x = (pos3.x * 0.5 + 0.5) * innerWidth;
+        const y = (-(pos3.y) * 0.5 + 0.5) * innerHeight;
+
+        // Hide if behind camera
+        if (pos3.z > 1) { label.style.display = 'none'; return; }
+
+        label.style.left = x + 'px';
+        label.style.top = y + 'px';
+
+        const statusText = d.dead ? 'CRASHED' : d.recharging ? 'CHARGING' : d.state === 'scanning' ? 'SCANNING' : d.state === 'moving' ? 'MOVING' : 'IDLE';
+        const batClass = d.dead ? 'dead' : d.battery < 25 ? 'low' : '';
+        const distToBase = Math.hypot(d.group.position.x - BASE.x, d.group.position.z - BASE.z);
+        const estRTB = (distToBase * DRAIN_PER_UNIT * 1.4 + 8).toFixed(0);
+        const color = DRONE_COLORS[i];
+
+        label.innerHTML = `<span class="dl-name" style="color:${color}">D${i+1}</span> ${statusText}<br>`
+            + `<span class="dl-bat ${batClass}">⚡${d.battery.toFixed(0)}%</span>`
+            + (d.dead ? '' : ` <span class="dl-rtb">← RTB: ~${estRTB}%</span>`);
+    });
+
+    renderer.render(scene, cam);
+}
+animate();
+
+addEventListener('resize', () => {
+    cam.aspect = innerWidth/innerHeight;
+    cam.updateProjectionMatrix();
+    renderer.setSize(innerWidth, innerHeight);
+});
+</script>
+</body>
+</html>
