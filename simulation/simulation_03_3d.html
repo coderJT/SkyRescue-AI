@@ -49,6 +49,11 @@
         .thought-entry.danger { background: rgba(255,50,0,0.08); color: #ff6644; border-left: 2px solid #cc2200; }
         .thought-entry.mcp-call { background: rgba(0,200,180,0.06); color: #44ccbb; border-left: 2px solid #009988; font-family: 'Menlo','Consolas',monospace; font-size: 9px; }
         .thought-entry.mcp-resp { background: rgba(0,200,180,0.04); color: #55aa99; border-left: 2px solid #00776655; font-family: 'Menlo','Consolas',monospace; font-size: 9px; }
+        .thought-entry.phase {
+            background: rgba(255,255,255,0.05); color: #fff; border: none; font-weight: 700;
+            text-align: center; font-size: 11px; padding: 10px 0; margin: 10px 0;
+            border-top: 1px dashed #555; border-bottom: 1px dashed #555; letter-spacing: 1px;
+        }
         .thought-drone-tag { font-size: 9px; font-weight: 700; margin-right: 4px; padding: 1px 4px; border-radius: 2px; }
         #mcp-toggle {
             display: inline-block; margin-left: 6px; padding: 2px 8px; border-radius: 4px; cursor: pointer;
@@ -183,6 +188,7 @@
             <label>⚡ Speed</label>
             <input type="range" id="speed-slider" min="5" max="100" value="20" oninput="updateSpeed(this.value)">
             <span id="speed-val">0.20</span>
+            <button id="pause-btn" onclick="togglePause()" style="background:rgba(255,200,50,0.15);border-color:rgba(255,200,50,0.3);color:#ffd855; padding:3px 10px; border-radius:4px; font-size:10px; cursor:pointer; pointer-events:auto; border-width:1px; border-style:solid; transition:all 0.2s;">⏸ Pause</button>
             <button id="daynight-btn" onclick="toggleDayNight()">🌙 Night</button>
             <button id="daynight-btn" onclick="location.reload()" style="background:rgba(255,50,50,0.15);border-color:rgba(255,50,50,0.3);color:#ff6655">↻ Restart</button>
         </div>
@@ -222,6 +228,19 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 // ─── CONFIG ───
 const GRID = 200, SECTORS = 10, CELL = GRID / SECTORS;  // 10×10 = each sub-tile is 20×20
 const SCAN_RADIUS = 14.5; // Enough to radius-cover a 20x20 cell (sqrt(10^2+10^2) ≈ 14.14)
+
+let isPaused = false;
+window.togglePause = function() {
+    isPaused = !isPaused;
+    const btn = document.getElementById('pause-btn');
+    if (btn) {
+        btn.innerHTML = isPaused ? '▶ Resume' : '⏸ Pause';
+        btn.style.color = isPaused ? '#55ff55' : '#ffd855';
+        btn.style.borderColor = isPaused ? 'rgba(85,255,85,0.3)' : 'rgba(255,200,50,0.3)';
+        btn.style.background = isPaused ? 'rgba(85,255,85,0.15)' : 'rgba(255,200,50,0.15)';
+    }
+};
+
 let MOVE_SPEED = 0.2;
 window.updateSpeed = function(v) {
     MOVE_SPEED = v / 100;
@@ -233,7 +252,7 @@ const OBSTACLE_RADIUS = 1.5;
 const AVOIDANCE_LOOKAHEAD = 6;
 const AVOIDANCE_STRENGTH = 0.7;
 const DRONE_COLORS = ['#3388ff','#ff5533','#33cc55','#ff9900','#cc44ff'];
-const DRONE_NAMES = ['Drone 1','Drone 2','Drone 3','Drone 4','Drone 5'];
+const DRONE_NAMES = ['drone_1','drone_2','drone_3','drone_4','drone_5'];
 const SURVIVORS = [];
 const BASE = {x: 5, z: 5};
 const drones = [];
@@ -293,15 +312,30 @@ window.toggleMCP = function() {
 };
 
 function addThought(droneIdx, type, msg) {
-    thoughtLogs[droneIdx].push({ type, msg, time: Date.now(), isMCP: false });
+    const prefixes = {
+        'action': '⚡ ACTION: ', 'reason': '🧠 REASONING: ', 'danger': '🚫 DANGER: ',
+        'alert': '🔥 ALERT: ', 'warning': '⚠️ WARNING: ', 'info': '   ℹ ', 'phase': ''
+    };
+    const formattedMsg = (prefixes[type] || '') + msg;
+
+    if (droneIdx === -1) {
+        const t = { type, msg: formattedMsg, time: Date.now(), isMCP: false, global: true };
+        for (let i = 0; i < 5; i++) {
+            thoughtLogs[i].push(t);
+            if (thoughtLogs[i].length > MAX_THOUGHTS) thoughtLogs[i].shift();
+        }
+        return;
+    }
+    
+    thoughtLogs[droneIdx].push({ type, msg: formattedMsg, time: Date.now(), isMCP: false, global: false });
     if (thoughtLogs[droneIdx].length > MAX_THOUGHTS) thoughtLogs[droneIdx].shift();
 }
 
 function addMCP(droneIdx, callType, toolName, args, response) {
-    const callMsg = `→ call_tool("${toolName}", ${JSON.stringify(args)})`;
-    const respMsg = `← ${JSON.stringify(response)}`;
-    thoughtLogs[droneIdx].push({ type: 'mcp-call', msg: callMsg, time: Date.now(), isMCP: true });
-    thoughtLogs[droneIdx].push({ type: 'mcp-resp', msg: respMsg, time: Date.now()+1, isMCP: true });
+    const callMsg = `⚡ ACTION: Calling ${toolName}()...<br><span style="color:#667788;font-size:8px;">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;INFO&nbsp;&nbsp;&nbsp;&nbsp; Processing request of type CallToolRequest       server.py:720</span>`;
+    const respMsg = `   ℹ ${JSON.stringify(response)}`;
+    thoughtLogs[droneIdx].push({ type: 'mcp-call', msg: callMsg, time: Date.now(), isMCP: true, global: false });
+    thoughtLogs[droneIdx].push({ type: 'mcp-resp', msg: respMsg, time: Date.now()+1, isMCP: true, global: false });
     if (thoughtLogs[droneIdx].length > MAX_THOUGHTS) {
         thoughtLogs[droneIdx] = thoughtLogs[droneIdx].slice(-MAX_THOUGHTS);
     }
@@ -321,9 +355,13 @@ function renderThoughts() {
     if (!showMCP) entries = entries.filter(t => !t.isMCP);
     let html = '';
     entries.forEach(t => {
-        const color = DRONE_COLORS[t.drone];
-        const tag = `<span class="thought-drone-tag" style="background:${color}22;color:${color}">D${t.drone+1}</span>`;
-        html += `<div class="thought-entry ${t.type}">${tag}${t.msg}</div>`;
+        if (t.global) {
+            html += `<div class="thought-entry ${t.type}">${t.msg}</div>`;
+        } else {
+            const color = DRONE_COLORS[t.drone];
+            const tag = `<span class="thought-drone-tag" style="background:${color}22;color:${color}">${DRONE_NAMES[t.drone]}</span>`;
+            html += `<div class="thought-entry ${t.type}">${tag} ${t.msg}</div>`;
+        }
     });
     el.innerHTML = html;
     el.parentElement.scrollTop = el.parentElement.scrollHeight;
@@ -717,9 +755,12 @@ for (let r=0;r<SECTORS;r++) for (let c=0;c<SECTORS;c++) {
     if (!NO_FLY.has(k)) globalQueue.push({r,c,k,hazard:hazardOf(r,c), assigned:false});
 }
 
-function getNextSector(dronePos) {
+function getNextSector(d, droneIdx) {
     let bestDist = Infinity;
     let bestSector = null;
+    let bestCostObj = null;
+
+    let rejectedFire = 0;
 
     for (let i = 0; i < globalQueue.length; i++) {
         const s = globalQueue[i];
@@ -727,22 +768,41 @@ function getNextSector(dronePos) {
         
         const px = s.c * CELL + CELL / 2;
         const pz = s.r * CELL + CELL / 2;
-        const dist = Math.hypot(px - dronePos.x, pz - dronePos.z);
+        const dist = Math.hypot(px - d.group.position.x, pz - d.group.position.z);
         
-        // Priority multiplier (lower is better): Fire = 0.1x distance, Smoke = 0.5x distance, Clear = 1x distance
         let priorityMult = s.hazard === "fire" ? 0.1 : (s.hazard === "smoke" ? 0.5 : 1.0);
         let score = dist * priorityMult;
         
+        const drainMult = (s.hazard==="fire"?3:s.hazard==="smoke"?1.5:1);
+        const toHazardCost = dist * DRAIN_PER_UNIT * drainMult;
+        const distFromSectorToBase = Math.hypot(px - BASE.x, pz - BASE.z);
+        const returnCost = distFromSectorToBase * DRAIN_PER_UNIT * 1.4 + 8;
+        const totalCostEstimate = toHazardCost + returnCost + 1; // +1 for scan
+        
+        if (d.battery < totalCostEstimate + 2) {
+            if (s.hazard === 'fire' && rejectedFire < 4) {
+                addThought(droneIdx, 'reason', `${DRONE_NAMES[droneIdx]} (${d.battery.toFixed(0)}% battery): S${s.k} [FIRE] costs ${totalCostEstimate.toFixed(1)}% — too expensive. Trying next sector.`);
+                rejectedFire++;
+            }
+            continue;
+        }
+
         if (score < bestDist) {
             bestDist = score;
             bestSector = s;
+            bestCostObj = { dist: dist.toFixed(1), drain: drainMult.toFixed(1), toCost: toHazardCost.toFixed(1), retCost: returnCost.toFixed(1), total: totalCostEstimate.toFixed(1) };
         }
     }
     
     if (bestSector) {
         bestSector.assigned = true;
+        addThought(droneIdx, 'reason', `${DRONE_NAMES[droneIdx]} has ${d.battery.toFixed(0)}% battery. Assigning S${bestSector.k} [${bestSector.hazard.toUpperCase()}] (${bestCostObj.dist} units, ${bestCostObj.drain}× drain). Cost: ${bestCostObj.toCost}% + ${bestCostObj.retCost}% return = ${bestCostObj.total}%.`);
+        if (bestSector.hazard === "fire") {
+            addThought(droneIdx, 'reason', `Sector S${bestSector.k} is in ACTIVE FIRE ZONE — high battery cost but survivors are likely trapped near fire fronts. Prioritizing rescue.`);
+        }
         return bestSector;
     }
+    addThought(droneIdx, 'warning', `${DRONE_NAMES[droneIdx]} cannot afford any remaining sector with safe return. Recalling for charging.`);
     return null;
 }
 
@@ -759,6 +819,15 @@ window.startMission = function() {
     missionStarted = true;
     missionStartTime = performance.now();
     document.getElementById('start-controls').style.display = 'none';
+
+    // Global Pre-Mission Logs
+    addThought(-1, 'phase', 'PHASE 1: DISCOVERY — Fleet & Environment Reconnaissance');
+    addThought(-1, 'action', 'Calling list_drones() to discover fleet on network...');
+    addThought(-1, 'reason', `Discovered ${drones.length} drones: ${DRONE_NAMES.join(', ')}`);
+    addThought(-1, 'action', 'Calling get_environment() to assess disaster zone hazards...');
+    addThought(-1, 'phase', 'PHASE 2: PLANNING — Building hazard-aware search plan');
+    addThought(-1, 'reason', 'Strategy: Prioritize fire-adjacent sectors where survivors are most likely trapped. Skip no-fly sectors.');
+    addThought(-1, 'phase', 'PHASE 3: EXECUTION — Autonomous wildfire search sweep');
 
     // Spawn Survivors dynamically
     const count = parseInt(document.getElementById('surv-count').value);
@@ -781,7 +850,7 @@ window.startMission = function() {
         survivorMeshes.push({body:mesh, ring, found:false});
     }
     drones.forEach((d,i) => {
-        const s = getNextSector(d.group.position);
+        const s = getNextSector(d, i);
         if (s) {
             d.target = {x: s.c*CELL+CELL/2, z: s.r*CELL+CELL/2, sector: s.k, hazard: s.hazard};
             d.state = "moving";
@@ -883,6 +952,8 @@ let elapsed = 0;
 function animate() {
     requestAnimationFrame(animate);
     const dt = clock.getDelta();
+    
+    if (!isPaused) {
     elapsed += dt;
     frameCount++;
 
@@ -942,7 +1013,7 @@ function animate() {
             if (d.battery >= 100) {
                 d.recharging = false;
                 addThought(i, 'action', `Recharged to 100%. Ready for deployment.`);
-                const s = getNextSector(d.group.position);
+                const s = getNextSector(d, i);
                 if (s) {
                     d.target = {x:s.c*CELL+CELL/2, z:s.r*CELL+CELL/2, sector:s.k, hazard:s.hazard};
                     d.state = "moving";
@@ -1090,7 +1161,7 @@ function animate() {
                     d.state = "moving";
                     addMCP(i, 'call', 'recall_for_charging', {drone_id:`drone_${i+1}`, battery:Math.round(d.battery)}, {status:'returning', target:'base'});
                 } else {
-                    const s = getNextSector(d.group.position);
+                    const s = getNextSector(d, i);
                     if (s) {
                         d.target = {x:s.c*CELL+CELL/2, z:s.r*CELL+CELL/2, sector:s.k, hazard:s.hazard};
                         d.state = "moving";
@@ -1107,6 +1178,11 @@ function animate() {
                         if (scanned === scannable && !missionComplete) {
                             missionComplete = true;
                             const totalTime = formatTime((performance.now() - missionStartTime) / 1000);
+                            
+                            addThought(-1, 'phase', 'PHASE 4: MISSION COMPLETE — Summary');
+                            addThought(-1, 'action', 'Calling get_mission_summary()...');
+                            addThought(-1, 'info', `Scannable Coverage: 100.0% (${scanned}/${scannable} sectors)`);
+                            addThought(-1, 'info', `Survivors Found: ${totalFound}`);
                             addThought(i, 'alert', `🎯 ALL SECTORS COVERED! MISSION SUCCESS! [Total Time: ${totalTime}]`);
                             addMCP(i, 'call', 'finalize_mission', {completion_time:totalTime}, {status:'mission_complete'});
                             
@@ -1125,6 +1201,7 @@ function animate() {
         scanSpheres[i].position.copy(d.group.position);
         d.battery = Math.max(0, d.battery);
     });
+    }
 
     // Camera
     // Camera follow
