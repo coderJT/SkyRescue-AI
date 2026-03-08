@@ -21,9 +21,9 @@ class SimulationEngine:
         return cls._instance
 
     def __init__(self):
-        if self._initialized:
-            return
         self._initialized = True
+        import time
+        self.start_time = time.time()
 
         # --- Drones (start at base camp in bottom-left) ---
         self.drones = {
@@ -34,16 +34,18 @@ class SimulationEngine:
             "drone_5": Drone("drone_5", 100, "active", (5, 5, 5)),
         }
 
-        # --- Survivors (unknown to agent, scattered in dangerous areas) ---
-        self.survivors = [
-            (25, 35, 0),   # near cliff edge
-            (50, 50, 0),   # center of map, near fire
-            (65, 55, 0),   # inside fire zone edge
-            (15, 75, 0),   # far north-west
-            (80, 65, 0),   # near dense trees
-            (35, 85, 0),   # north, clear zone
-            (72, 12, 0),   # south-east
+        # Survivors: (x, y, z, survival_limit_seconds)
+        self.survivors = []
+        raw_survivors = [
+            (25, 35, 0), (50, 50, 0), (65, 55, 0), 
+            (15, 75, 0), (80, 65, 0), (35, 85, 0), (72, 12, 0)
         ]
+        for x, y, z in raw_survivors:
+            sid = self._get_sector_at(x, y)
+            limit = 600 # default 10 mins
+            if sid in self.fire_sector_ids: limit = 60
+            elif sid in self.smoke_sector_ids: limit = 180
+            self.survivors.append({"pos": (x, y, z), "limit": limit, "expired": False})
 
         # --- Discovered survivors (found during scans) ---
         self.discovered_survivors = []
@@ -153,6 +155,27 @@ class SimulationEngine:
     def log(self, message):
         self.mission_log.append(message)
 
+    def reset_mission(self):
+        """Reset mission timer, survivors, and sector states for a new run."""
+        import time
+        self.start_time = time.time()
+        self.discovered_survivors = []
+        self.mission_log = []
+        
+        # Reset survivors
+        for s in self.survivors:
+            s["expired"] = False
+            
+        # Reset sectors (except no-fly zones)
+        for sid, sector in self.sectors.items():
+            if sector["hazard"] != "no_fly":
+                sector["scanned"] = False
+            sector["assigned_to"] = None
+            sector["survivors_found"] = []
+                
+        self.log("Mission Reset: Grid cleared and timers restarted.")
+        return {"status": "success", "message": "Mission state fully reset."}
+
     def _get_sector_at(self, x, y):
         """Return the sector ID for a given coordinate."""
         col = min(int(x / self.sector_width), self.sector_cols - 1)
@@ -226,7 +249,13 @@ class SimulationEngine:
 
         # Extra scan cost in fire zones
         multiplier = self._battery_multiplier_at(drone.coordinates[0], drone.coordinates[1])
-        detected = drone.thermal_scan(self.survivors)
+        
+        # Check survival limits
+        import time
+        elapsed = time.time() - self.start_time
+        active_survivors = [s["pos"] for s in self.survivors if not s["expired"] and elapsed < s["limit"]]
+        
+        detected = drone.thermal_scan(active_survivors)
         if multiplier > 1.0:
             drone.drain_battery(0.5 * (multiplier - 1))  # extra scan drain
 
@@ -342,6 +371,51 @@ class SimulationEngine:
             "survivors_found": scan_result["detected"],
             "battery_after": scan_result["battery_after"],
         }
+
+    def get_tactical_recommendations(self, drone_id, battery, current_pos, other_drones):
+        """
+        Calculate the top 5 tactical candidates based on:
+        1. Priority (Fire > Smoke > Clear)
+        2. Proximity (Distance to drone)
+        3. Swarm Coordination (Avoid sectors already targeted by teammates)
+        """
+        cx, cy, cz = current_pos
+        candidates = []
+        
+        # Identify sectors already claimed by teammates
+        claimed_sectors = {d.get('target_sector') for d in other_drones if d.get('target_sector')}
+        
+        import time
+        elapsed = time.time() - self.start_time
+
+        for sid, sector in self.sectors.items():
+            if sector["scanned"] or sector["hazard"] == "no_fly" or sid in claimed_sectors:
+                continue
+                
+            scx, scy = sector["center"]
+            dist = math.sqrt((scx - cx)**2 + (scy - cy)**2)
+            
+            # Priority weights (Survival Timers: Fire=60s, Smoke=180s, Clear=600s)
+            limit = 600
+            if sector["hazard"] == "fire": limit = 60
+            elif sector["hazard"] == "smoke": limit = 180
+            
+            time_left = max(0, limit - elapsed)
+            
+            # Urgent if time_left is low
+            candidates.append({
+                "id": sid,
+                "center": list(sector["center"]),
+                "distance": round(dist, 1),
+                "hazard": sector["hazard"],
+                "time_left_seconds": round(time_left, 1),
+                "priority_weight": time_left # Lower time left = higher priority
+            })
+            
+        # Sort: Primary by Time Left (Urgency), Secondary by Distance
+        candidates.sort(key=lambda x: (x["priority_weight"], x["distance"]))
+        
+        return candidates[:5]
 
     # ─── Summary ───
 

@@ -1,15 +1,99 @@
-"""
-MCP Server - Rescue Drone Server (Forest Wildfire Environment)
-Exposes drone operations and environmental tools as standardized MCP tools.
-Uses a singleton SimulationEngine for persistent state across tool calls.
-"""
+import os
 from mcp.server.fastmcp import FastMCP
 from simulation.simulation_engine import SimulationEngine
+from langchain_mistralai import ChatMistralAI
+from langchain_core.messages import SystemMessage, HumanMessage
 
 mcp = FastMCP("Rescue Drone Server")
 
 # Shared simulation state (singleton)
 engine = SimulationEngine()
+
+# Initialize LLM only if API key is present
+api_key = os.environ.get("MISTRAL_API_KEY")
+llm = None
+if api_key:
+    llm = ChatMistralAI(model="mistral-large-latest", mistral_api_key=api_key)
+
+
+@mcp.tool()
+def get_high_level_decision(drone_id: str, battery: float, current_pos: list[float], other_drones: list[dict]) -> dict:
+    """
+    Use the high-level Mistral LLM brain to decide the next move for a drone.
+    This tool combines tactical recommendations with strategic swarm coordination.
+    """
+    if not llm:
+        return {"error": "MISTRAL_API_KEY not set on MCP server. LLM Brain unavailable."}
+
+    # Fetch top tactical candidates from the SAME engine instance
+    recommendations = engine.get_tactical_recommendations(drone_id, battery, current_pos, other_drones)
+
+    if not recommendations:
+        return {"decision": "__RECALL__", "reasoning": "No scannable sectors available within safe reach."}
+
+    # Build prompt context
+    prompt = f"""
+You are the high-level swarm commander for {drone_id} in a critical SAR mission.
+Current Battery: {battery:.1f}%
+Current Position [x, y, z]: {current_pos}
+Base Station: [5, 0, 5]
+
+SWARM CONTEXT (Teammates):
+"""
+    for d in other_drones:
+        ts = d.get('target_sector') or 'None'
+        prompt += f"- {d['id']}: Position {d['pos']} | State: {d['state']} | Target: {ts}\n"
+
+    prompt += """
+TACTICAL RECOMMENDATIONS (Sorted by Urgency & Proximity):
+Your tactical specialist (the simulation engine) has curated these candidates:
+"""
+    for r in recommendations:
+        prompt += f"- {r['id']}: {r['hazard'].upper()} | Time Remaining: {r['time_left_seconds']}s | Distance: {r['distance']} units\n"
+
+    prompt += """
+COMMANDERS GOAL:
+1. Review the recommendations. 
+2. Choose the BEST sector from the list.
+3. DEADLINE PRIORITY: Prioritize sectors with the LOWEST 'Time Remaining' (Fire: 60s, Smoke: 180s).
+4. STRATEGIC SEPARATION: Do NOT pick a sector if another drone is already targeting it.
+
+REQUIRED JSON FORMAT:
+{
+    "decision": "SectorID",
+    "reasoning": "Explain your choice (e.g., 'Choosing S3_2: critical fire area with only 15s remaining')."
+}
+"""
+
+    try:
+        response = llm.invoke([
+            SystemMessage(content="You are a high-level rescue commander AI. You output ONLY valid JSON."),
+            HumanMessage(content=prompt)
+        ])
+        
+        import json
+        content = response.content.strip()
+        if content.startswith("```json"): content = content[7:-3]
+        elif content.startswith("```"): content = content[3:-3]
+            
+        result = json.loads(content)
+        # Final validation against scannable list
+        if result.get("decision") not in [r["id"] for r in recommendations] and result.get("decision") != "__RECALL__":
+             result["decision"] = recommendations[0]["id"]
+             result["reasoning"] = "(Tactical Override) " + result.get("reasoning", "")
+             
+        return result
+    except Exception as e:
+        return {"decision": recommendations[0]["id"], "reasoning": f"Tactical fallback: {str(e)}"}
+
+
+@mcp.tool()
+def reset_mission() -> dict:
+    """
+    Reset the mission clock and survival timers. 
+    Call this when starting a new simulation run.
+    """
+    return engine.reset_mission()
 
 
 @mcp.tool()
@@ -118,6 +202,15 @@ def get_hazard_map() -> dict:
     Useful for visualizing the disaster zone and planning safe routes.
     """
     return engine.get_hazard_map()
+
+
+@mcp.tool()
+def get_tactical_recommendations(drone_id: str, battery: float, current_pos: list[float], other_drones: list[dict]) -> list:
+    """
+    Get the top 5 tactical candidates for a drone based on hierarchical priority and proximity.
+    'other_drones' should be a list of {id, pos, state, target_sector} to avoid duplicate targeting.
+    """
+    return engine.get_tactical_recommendations(drone_id, battery, current_pos, other_drones)
 
 
 @mcp.tool()
