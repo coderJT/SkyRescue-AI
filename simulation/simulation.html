@@ -415,7 +415,7 @@ const mcpClient = {
     nextId: 1,
     connect: function() {
         if (this.connected) return;
-        const sseUrl = 'http://127.0.0.1:8000/sse';
+        const sseUrl = 'https://usm-cs3.fastmcp.app/mcp/sse';
         console.log(`[MCP] Connecting to ${sseUrl}...`);
         
         try {
@@ -1138,13 +1138,6 @@ window.startMission = function() {
 
     // Reset the backend simulation engine timer and survivors
     addMCP(0, 'call', 'reset_mission', {}, {status:'resetting'});
-    
-    // Reset the LLM Brain process (important since it's a separate process)
-    if (useLLM) {
-        fetch('http://127.0.0.1:8000/reset', { method: 'POST' })
-            .then(() => console.log("LLM Brain Reset Successfully"))
-            .catch(e => console.error("LLM Brain Reset Failed", e));
-    }
     
     // Spawn Survivors dynamically
     for(let i=0; i<survCount; i++) {
