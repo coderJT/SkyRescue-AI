@@ -419,6 +419,7 @@ window.toggleMCP = function() {
 };
 
 function addThought(droneIdx, type, msg) {
+    if (missionComplete) return; // Suppress all logs after mission ends
     let reasonPrefix = useLLM ? '🧠 REASONING (LLM): ' : '🧠 REASONING (LOCAL): ';
     const prefixes = {
         'action': '⚡ ACTION: ', 'reason': reasonPrefix, 'danger': '🚫 DANGER: ',
@@ -445,6 +446,7 @@ function addThought(droneIdx, type, msg) {
 }
 
 function addMCP(droneIdx, callType, toolName, args, response) {
+    if (missionComplete) return; // Suppress all logs after mission ends
     const callMsg = `⚡ ACTION: Calling ${toolName}()...<br><span style="color:#667788;font-size:8px;">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;INFO&nbsp;&nbsp;&nbsp;&nbsp; Processing request of type CallToolRequest       server.py:720</span>`;
     const respMsg = `   ℹ ${JSON.stringify(response)}`;
     thoughtLogs[droneIdx].push({ type: 'mcp-call', msg: callMsg, time: Date.now(), isMCP: true, global: false });
@@ -1457,6 +1459,12 @@ function animate() {
     drones.forEach((d,i) => {
         d.rotors.forEach(r => r.rotation.y += dt * 30);
 
+        // After mission complete, stop all processing once drone is idle/at base
+        if (missionComplete && (d.state === 'idle' || d.dead)) {
+            scanSpheres[i].position.copy(d.group.position);
+            return;
+        }
+
         // Record path
         if (frameCount % PATH_SAMPLE_INTERVAL === 0 && (d.state==='moving'||d.state==='scanning')) {
             const p = d.group.position;
@@ -1505,6 +1513,11 @@ function animate() {
             d.battery = Math.min(100, d.battery + dt * 25);
             if (d.battery >= 100) {
                 d.recharging = false;
+                if (missionComplete) {
+                    d.state = "idle"; // Mission done — stay at base
+                    scanSpheres[i].position.copy(d.group.position);
+                    return;
+                }
                 addThought(i, 'action', `Recharged to 100%. Ready for deployment.`);
                 const s = getNextSector(d, i);
                 if (s) {
@@ -1603,9 +1616,15 @@ function animate() {
                     addMCP(i, 'call', 'thermal_scan', {drone_id:`drone_${i+1}`, sector:d.target.sector}, {status:'scanning', radius:SCAN_RADIUS});
                     addThought(i, 'action', `Reached sector ${d.target.sector}. Deploying thermal scan (radius: ${SCAN_RADIUS}u)...`);
                 } else {
-                    d.recharging = true; d.state = "idle";
-                    addMCP(i, 'call', 'recall_for_charging', {drone_id:`drone_${i+1}`}, {status:'charging', base:[BASE.x,BASE.z]});
-                    addThought(i, 'action', `At base. Charging...`);
+                    // Reached base
+                    if (missionComplete) {
+                        d.state = "idle"; // Mission done — park at base
+                        d.group.position.set(BASE.x + i*2, 3, BASE.z + i*2);
+                    } else {
+                        d.recharging = true; d.state = "idle";
+                        addMCP(i, 'call', 'recall_for_charging', {drone_id:`drone_${i+1}`}, {status:'charging', base:[BASE.x,BASE.z]});
+                        addThought(i, 'action', `At base. Charging...`);
+                    }
                 }
             }
         } // End of state === "moving"

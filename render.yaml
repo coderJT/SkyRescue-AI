@@ -1,0 +1,11 @@
+services:
+  - type: web
+    name: skyrescue-llm
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn agent.llm_server:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: MISTRAL_API_KEY
+        value: I9scitF9NjVoTue6P7F1ZyCseCxD8GMn
+      - key: PYTHON_VERSION
+        value: "3.11.0"

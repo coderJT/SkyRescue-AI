@@ -92,7 +92,7 @@ Full Model Context Protocol server with **15 tools** that any MCP client can dis
 ```
 ┌─────────────────────────────────────────────────────────┐
 │                   3D Browser Simulation                  │
-│              (simulation_03_3d.html — Three.js)          │
+│              (simulation.html — Three.js)                │
 │                                                          │
 │  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐   │
 │  │  Drone 1 │ │  Drone 2 │ │  Drone 3 │ │  Drone N │   │
@@ -140,10 +140,8 @@ Full Model Context Protocol server with **15 tools** that any MCP client can dis
 ```
 vhack-cs3/
 ├── simulation/
-│   ├── simulation_03_3d.html      # 🖥️  Main 3D simulation (Three.js, ~1800 lines)
-│   ├── simulation_engine.py       # ⚙️  Core simulation logic (sectors, hazards, drones)
-│   ├── simulation_02_visual.py    # 📊 2D visual prototype (Pygame)
-│   └── simulation_01_text.py      # 📝 Text-based prototype (CLI)
+│   ├── simulation.html            # 🖥️  Main 3D simulation (Three.js, ~1800 lines)
+│   └── simulation_engine.py       # ⚙️  Core simulation logic (sectors, hazards, drones)
 ├── agent/
 │   ├── llm_server.py              # 🧠 LLM Decision Engine (FastAPI + Mistral AI)
 │   ├── mcp_client.py              # 🔌 MCP client for tool discovery & invocation
@@ -193,17 +191,17 @@ INFO:     Uvicorn running on http://0.0.0.0:8000
 
 ### 3. Launch the 3D Simulation
 
-Open `simulation/simulation_03_3d.html` in your browser:
+Open `simulation/simulation.html` in your browser:
 
 ```bash
 # macOS
-open simulation/simulation_03_3d.html
+open simulation/simulation.html
 
 # Linux
-xdg-open simulation/simulation_03_3d.html
+xdg-open simulation/simulation.html
 
 # Windows
-start simulation/simulation_03_3d.html
+start simulation/simulation.html
 ```
 
 ### 4. Run the Mission
@@ -296,16 +294,6 @@ It also performs battery feasibility checks before assignment.
 | **Single-Fire Completion** | Mission success triggers exactly once (no log explosion)      |
 
 ---
-
-## 🧪 Running Other Simulations
-
-```bash
-# Text-based simulation (CLI prototype)
-python simulation/simulation_01_text.py
-
-# 2D visual simulation (Pygame prototype)
-python simulation/simulation_02_visual.py
-```
 
 ---
 
