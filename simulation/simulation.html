@@ -779,6 +779,8 @@ scene.add(towerG);
 
 // Sector tiles
 const sectorMeshes = {};
+const fireParticles = [];
+const smokePlanes = [];
 for (let r=0;r<SECTORS;r++) for (let c=0;c<SECTORS;c++) {
     const h = hazardOf(r,c);
     let color = 0x0f2f0f;
@@ -807,6 +809,8 @@ const treeMaterials = {
     canopyLight: new THREE.MeshStandardMaterial({color:0x1a5a1a, roughness:0.8}),
     canopySmoke: new THREE.MeshStandardMaterial({color:0x2a3a1a, roughness:0.8}),
     canopyBurned: new THREE.MeshStandardMaterial({color:0x222200, roughness:0.9, transparent:true, opacity:0.4}),
+    stone: new THREE.MeshStandardMaterial({color:0x444444, roughness:0.9}),
+    water: new THREE.MeshStandardMaterial({color:0x0044ff, transparent:true, opacity:0.75, roughness:0.1, metalness:0.3}),
 };
 
 function spawnTree(cx, cz, tall, burned) {
@@ -870,6 +874,51 @@ for (let r=0; r<SECTORS; r++) for (let c=0; c<SECTORS; c++) {
         const burned = (h === 'fire');
         spawnTree(tx, tz, tall, burned);
     }
+
+    // Add stones and ponds in appropriate sectors
+    if (h === 'clear' || h === 'smoke') {
+        // Randomly spawn stones
+        if (Math.random() > 0.7) {
+            const sx = cx0 + 2 + Math.random()*(CELL-4);
+            const sz = cz0 + 2 + Math.random()*(CELL-4);
+            spawnStone(sx, sz);
+        }
+        // Randomly spawn ponds (less frequent, only in clear areas)
+        if (h === 'clear' && Math.random() > 0.92) {
+            const px = cx0 + CELL/2 + (Math.random()-0.5)*4;
+            const pz = cz0 + CELL/2 + (Math.random()-0.5)*4;
+            spawnPond(px, pz);
+        }
+    } else if (h === 'no_fly') {
+        // More rocks in no-fly zones
+        if (Math.random() > 0.5) {
+            const sx = cx0 + 2 + Math.random()*(CELL-4);
+            const sz = cz0 + 2 + Math.random()*(CELL-4);
+            spawnStone(sx, sz, 1.5);
+        }
+    }
+}
+
+function spawnStone(cx, cz, scale=1) {
+    const size = (0.5 + Math.random() * 1.5) * scale;
+    const geo = new THREE.IcosahedronGeometry(size, 0);
+    const mesh = new THREE.Mesh(geo, treeMaterials.stone);
+    mesh.position.set(cx, size * 0.6, cz);
+    mesh.rotation.set(Math.random() * Math.PI, Math.random() * Math.PI, Math.random() * Math.PI);
+    mesh.scale.set(1, 0.4 + Math.random() * 0.6, 1);
+    scene.add(mesh);
+    if (size > 1.2) {
+        registerObstacle(cx, cz, size * 0.8, size);
+    }
+}
+
+function spawnPond(cx, cz) {
+    const radius = 2 + Math.random() * 3;
+    const geo = new THREE.CircleGeometry(radius, 16);
+    const mesh = new THREE.Mesh(geo, treeMaterials.water);
+    mesh.rotation.x = -Math.PI / 2;
+    mesh.position.set(cx, 0.03, cz);
+    scene.add(mesh);
 }
 
 // ─── NO-FLY ZONE EXTRA OBSTACLES (rocks/boulders) ───
@@ -890,26 +939,84 @@ for (const key of NO_FLY) {
     }
 }
 
+function spawnHouse(cx, cz, isSurvivorShed=false) {
+    const houseG = new THREE.Group();
+    const houseBase = new THREE.Mesh(new THREE.BoxGeometry(6, 4, 8), new THREE.MeshStandardMaterial({color: isSurvivorShed ? 0x5c4033 : 0x7a5b4a, roughness: 0.9}));
+    houseG.add(houseBase);
+
+    const roofGeometry = new THREE.CylinderGeometry(0, 5, 3, 4, 1);
+    roofGeometry.rotateY(Math.PI / 4);
+    const houseRoof = new THREE.Mesh(roofGeometry, new THREE.MeshStandardMaterial({color: 0x222222, roughness: 0.8}));
+    houseRoof.position.y = 3.5;
+    houseG.add(houseRoof);
+
+    const chimney = new THREE.Mesh(new THREE.BoxGeometry(1, 4, 1), new THREE.MeshStandardMaterial({color: 0x442222}));
+    chimney.position.set(-1.5, 4, -2);
+    houseG.add(chimney);
+
+    houseG.position.set(cx, 2, cz);
+    scene.add(houseG);
+    registerObstacle(cx, cz, 4, 7);
+}
+
 // ─── CENTER CABIN (SURVIVOR SHELTER) ───
-const houseBase = new THREE.Mesh(new THREE.BoxGeometry(6, 4, 8), new THREE.MeshStandardMaterial({color:0x5c4033, roughness:0.9}));
-houseBase.position.set(GRID/2, 2, GRID/2); 
-scene.add(houseBase);
+spawnHouse(GRID/2, GRID/2, true);
 
-const roofGeometry = new THREE.CylinderGeometry(0, 5, 3, 4, 1);
-roofGeometry.rotateY(Math.PI / 4);
-const houseRoof = new THREE.Mesh(roofGeometry, new THREE.MeshStandardMaterial({color:0x222222, roughness:0.8}));
-houseRoof.position.set(GRID/2, 5.5, GRID/2);
-scene.add(houseRoof);
+// ─── ADDITIONAL HOUSES ───
+for (let i=0; i<10; i++) {
+    let hx, hz, distToBase, distToVolcano;
+    // Keep picking positions until safe distance from center base and volcano
+    do {
+        hx = 10 + Math.random() * (GRID - 20);
+        hz = 10 + Math.random() * (GRID - 20);
+        distToBase = Math.hypot(hx - GRID/2, hz - GRID/2);
+        distToVolcano = Math.hypot(hx - 15, hz - 85);
+    } while (distToBase < 15 || distToVolcano < 20);
+    
+    spawnHouse(hx, hz);
+}
 
-// Small Chimney
-const chimney = new THREE.Mesh(new THREE.BoxGeometry(1, 4, 1), new THREE.MeshStandardMaterial({color:0x442222}));
-chimney.position.set(GRID/2 - 1.5, 6, GRID/2 - 2);
-scene.add(chimney);
+// ─── VOLCANO (MOUNTAIN LANDMARK) ───
+const volcanoG = new THREE.Group();
+const volBaseGeo = new THREE.CylinderGeometry(4, 15, 12, 12);
+const volBaseMat = new THREE.MeshStandardMaterial({color: 0x2a2a2a, roughness: 1, metalness: 0.1});
+const volBase = new THREE.Mesh(volBaseGeo, volBaseMat);
+volBase.position.y = 6;
+volcanoG.add(volBase);
 
-registerObstacle(GRID/2, GRID/2, 4, 7); // Register the house as a solid obstacle
+const volCraterGeo = new THREE.TorusGeometry(3.8, 0.5, 8, 16);
+const volCraterMat = new THREE.MeshStandardMaterial({color: 0xff4400, emissive: 0xff0000, emissiveIntensity: 2});
+const volCrater = new THREE.Mesh(volCraterGeo, volCraterMat);
+volCrater.rotation.x = Math.PI/2;
+volCrater.position.y = 12;
+volcanoG.add(volCrater);
+
+const volLavaGeo = new THREE.CircleGeometry(3.5, 12);
+const volLavaMat = new THREE.MeshStandardMaterial({color: 0xff6600, emissive: 0xff2200, emissiveIntensity: 5});
+const volLava = new THREE.Mesh(volLavaGeo, volLavaMat);
+volLava.rotation.x = -Math.PI/2;
+volLava.position.y = 11.8;
+volcanoG.add(volLava);
+
+// Volcano Position (Southeast Corner)
+const volX = 15, volZ = 85;
+volcanoG.position.set(volX, 0, volZ);
+scene.add(volcanoG);
+registerObstacle(volX, volZ, 12, 15);
+
+// Persistent Volcano Smoke
+for (let layer=0; layer<4; layer++) {
+    const p = new THREE.Mesh(
+        new THREE.PlaneGeometry(8, 8),
+        new THREE.MeshBasicMaterial({color: 0x333333, transparent: true, opacity: 0.15, side: THREE.DoubleSide})
+    );
+    p.rotation.x = -Math.PI/2;
+    p.position.set(volX + (Math.random()-0.5)*2, 13 + layer*4, volZ + (Math.random()-0.5)*2);
+    scene.add(p);
+    smokePlanes.push({mesh:p, phase:Math.random()*6.28});
+}
 
 // ─── FIRE EFFECTS ───
-const fireParticles = [];
 for (const key of FIRE) {
     const [r,c] = key.slice(1).split("_").map(Number);
     const cx = c*CELL+CELL/2, cz = r*CELL+CELL/2;
@@ -925,7 +1032,6 @@ for (const key of FIRE) {
 }
 
 // Smoke
-const smokePlanes = [];
 for (const key of SMOKE) {
     const [r,c] = key.slice(1).split("_").map(Number);
     const cx = c*CELL+CELL/2, cz = r*CELL+CELL/2;
