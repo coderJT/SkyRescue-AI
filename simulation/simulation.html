@@ -205,7 +205,7 @@
             <div id="sc">Initializing...</div>
             <div id="connection-status" style="margin-top: 8px; font-size: 10px; padding: 4px; background: rgba(0,0,0,0.3); border-radius: 4px; border: 1px solid rgba(255,255,255,0.1); margin-bottom: 8px;">
                 <div style="display:flex; justify-content:space-between;">
-                    <span><span id="llm-dot" style="color:#ff3333">●</span> API: LLM Server</span>
+                    <span><span id="llm-dot" style="color:#ff3333">●</span> API: MCP Server</span>
                     <span title="MCP is mocked successfully in browser context"><span id="mcp-dot" style="color:#33ff33">●</span> SYS: MCP Link</span>
                 </div>
             </div>
@@ -314,22 +314,16 @@ window.updateSpeed = function(v) {
 
 // Connection Status Pinger
 setInterval(() => {
-    fetch('http://127.0.0.1:8000/health')
-    .then(res => res.json())
-    .then(data => {
-        const dot = document.getElementById('llm-dot');
-        if (dot) {
-            dot.style.color = data.llm_connected ? '#33ff33' : '#ffaa00';
-            dot.parentElement.title = data.llm_connected ? 'Connected to Mistral AI' : 'Server up, no API key';
-        }
-    })
-    .catch(() => {
-        const dot = document.getElementById('llm-dot');
-        if (dot) {
+    const dot = document.getElementById('llm-dot');
+    if (dot) {
+        if (typeof mcpClient !== 'undefined' && mcpClient.connected) {
+            dot.style.color = '#33ff33';
+            dot.parentElement.title = 'Connected to MCP Server (SSE)';
+        } else {
             dot.style.color = '#ff3333';
-            dot.parentElement.title = 'LLM Server unreachable';
+            dot.parentElement.title = 'MCP Server unreachable';
         }
-    });
+    }
 }, 2000);
 
 let showScannedSectors = false;
@@ -364,6 +358,8 @@ const SURVIVORS = [];
 const BASE = {x: 5, z: 5};
 const drones = []; // Moved initialization to startMission
 const scanSpheres = []; // Moved initialization to startMission
+let thoughtIdCounter = 0;
+let isBatchThinking = false;
 
 // Hazards defined on original 5×5 macro-grid, expanded to 10×10
 const NO_FLY_MACRO = ["1_1","2_1","0_4","1_4"];
@@ -374,10 +370,10 @@ function expandMacro(list) {
     const s = new Set();
     for (const key of list) {
         const [mr,mc] = key.split("_").map(Number);
-        s.add(`${mr*2}_${mc*2}`);
-        s.add(`${mr*2+1}_${mc*2}`);
-        s.add(`${mr*2}_${mc*2+1}`);
-        s.add(`${mr*2+1}_${mc*2+1}`);
+        s.add(`S${mr*2}_${mc*2}`);
+        s.add(`S${mr*2+1}_${mc*2}`);
+        s.add(`S${mr*2}_${mc*2+1}`);
+        s.add(`S${mr*2+1}_${mc*2+1}`);
     }
     return s;
 }
@@ -392,7 +388,7 @@ for (const f of FIRE) {
     }
 }
 function hazardOf(r,c) {
-    const k=`${r}_${c}`;
+    const k=`S${r}_${c}`;
     if (NO_FLY.has(k)) return "no_fly";
     if (FIRE.has(k)) return "fire";
     if (SMOKE.has(k)) return "smoke";
@@ -410,6 +406,113 @@ function registerObstacle(x, z, r, h) {
 const thoughtLogs = [[], [], [], [], []];
 const MAX_THOUGHTS = 40;
 let showMCP = false;
+
+// ─── REAL MCP CLIENT over SSE ───
+const mcpClient = {
+    connected: false,
+    endpoint: null,
+    requests: new Map(),
+    nextId: 1,
+    connect: function() {
+        if (this.connected) return;
+        const sseUrl = 'http://127.0.0.1:8000/sse';
+        console.log(`[MCP] Connecting to ${sseUrl}...`);
+        
+        try {
+            this.es = new EventSource(sseUrl);
+            
+            this.es.addEventListener('endpoint', (e) => {
+                let path = e.data;
+                this.endpoint = new URL(path, sseUrl).href;
+                console.log(`[MCP] SSE Stream open. POST endpoint: ${this.endpoint}`);
+                // Perform MCP Protocol Handshake
+                this.initializeSession();
+            });
+            
+            this.es.onmessage = (e) => {
+                const data = JSON.parse(e.data);
+                if (data.id && this.requests.has(data.id)) {
+                    const {resolve, reject} = this.requests.get(data.id);
+                    this.requests.delete(data.id);
+                    if (data.error) reject(data.error);
+                    else resolve(data.result);
+                }
+            };
+            
+            this.es.onerror = (err) => {
+                console.warn('[MCP] EventSource error', err);
+                this.connected = false;
+            };
+        } catch(e) { console.error('[MCP] Failed to create EventSource', e); }
+    },
+    
+    send: function(payload) {
+        return fetch(this.endpoint, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+    },
+
+    initializeSession: async function() {
+        try {
+            // 1. Send initialize request
+            const initId = this.nextId++;
+            const initPromise = new Promise((resolve, reject) => {
+                this.requests.set(initId, {resolve, reject});
+                this.send({
+                    jsonrpc: "2.0",
+                    id: initId,
+                    method: "initialize",
+                    params: {
+                        protocolVersion: "2024-11-05",
+                        capabilities: {},
+                        clientInfo: { name: "vhack-browser", version: "1.0.0" }
+                    }
+                });
+            });
+            
+            await initPromise;
+            
+            // 2. Send initialized notification
+            await this.send({
+                jsonrpc: "2.0",
+                method: "notifications/initialized"
+            });
+            
+            this.connected = true;
+            console.log('[MCP] Session Initialized successfully.');
+        } catch (e) {
+            console.error('[MCP] Initialization failed', e);
+        }
+    },
+
+    callTool: async function(name, args) {
+        if (!this.connected || !this.endpoint) {
+            throw new Error("MCP not fully connected/initialized yet");
+        }
+        const id = this.nextId++;
+        const payload = {
+            jsonrpc: "2.0",
+            id: id,
+            method: "tools/call",
+            params: { name: name, arguments: args }
+        };
+        
+        return new Promise((resolve, reject) => {
+            this.requests.set(id, {resolve, reject});
+            this.send(payload).then(res => {
+                if (!res.ok) throw new Error("MCP POST failed: " + res.status);
+            }).catch(e => {
+                this.requests.delete(id);
+                reject(e);
+            });
+        });
+    }
+};
+
+// Start MCP connection immediately
+mcpClient.connect();
 
 window.toggleMCP = function() {
     showMCP = !showMCP;
@@ -432,8 +535,10 @@ function addThought(droneIdx, type, msg) {
         thoughtLogs.push([]);
     }
 
+    const thoughtId = ++thoughtIdCounter;
+    
     if (droneIdx === -1) {
-        const t = { type, msg: formattedMsg, time: Date.now(), isMCP: false, global: true };
+        const t = { id: thoughtId, type, msg: formattedMsg, time: Date.now(), isMCP: false, global: true };
         for (let i = 0; i < drones.length; i++) { // Use drones.length here
             thoughtLogs[i].push(t);
             if (thoughtLogs[i].length > MAX_THOUGHTS) thoughtLogs[i].shift();
@@ -441,7 +546,7 @@ function addThought(droneIdx, type, msg) {
         return;
     }
     
-    thoughtLogs[droneIdx].push({ type, msg: formattedMsg, time: Date.now(), isMCP: false, global: false });
+    thoughtLogs[droneIdx].push({ id: thoughtId, type, msg: formattedMsg, time: Date.now(), isMCP: false, global: false });
     if (thoughtLogs[droneIdx].length > MAX_THOUGHTS) thoughtLogs[droneIdx].shift();
 }
 
@@ -454,6 +559,14 @@ function addMCP(droneIdx, callType, toolName, args, response) {
     if (thoughtLogs[droneIdx].length > MAX_THOUGHTS) {
         thoughtLogs[droneIdx] = thoughtLogs[droneIdx].slice(-MAX_THOUGHTS);
     }
+    
+    // ACTUALLY execute the tool call on the Python server so it stays in sync
+    if (useLLM && mcpClient && mcpClient.connected) {
+        // We do this asynchronously without awaiting to not block the simulation loop
+        mcpClient.callTool(toolName, args).catch(e => {
+            console.warn(`[MCP Sync Error] Tool ${toolName} failed:`, e);
+        });
+    }
 }
 
 function renderThoughts() {
@@ -462,8 +575,17 @@ function renderThoughts() {
     if (activeDrone >= 0) {
         entries = thoughtLogs[activeDrone].map(t => ({...t, drone: activeDrone}));
     } else {
-        for (let i = 0; i < drones.length; i++) thoughtLogs[i].forEach(t => entries.push({...t, drone: i})); // Use drones.length
-        entries.sort((a,b) => a.time - b.time);
+        const seenGlobalIds = new Set();
+        for (let i = 0; i < drones.length; i++) {
+            thoughtLogs[i].forEach(t => {
+                if (t.global) {
+                    if (seenGlobalIds.has(t.id)) return;
+                    seenGlobalIds.add(t.id);
+                }
+                entries.push({...t, drone: i});
+            });
+        }
+        entries.sort((a,b) => a.time - b.time || (a.id - b.id));
         entries = entries.slice(-MAX_THOUGHTS);
     }
     // Filter MCP entries based on toggle
@@ -502,7 +624,7 @@ function drawMinimap() {
     mapCtx.fillRect(0, 0, MAP_W, MAP_H);
     // Sector tiles
     for (let r = 0; r < SECTORS; r++) for (let c = 0; c < SECTORS; c++) {
-        const h = hazardOf(r,c), scanned = sectorMeshes[`${r}_${c}`]?.scanned;
+        const h = hazardOf(r,c), scanned = sectorMeshes[`S${r}_${c}`]?.scanned;
         let fill = '#1a3a1a';
         if (h === 'no_fly') fill = '#222';
         else if (h === 'fire') fill = scanned ? '#3a2210' : '#441100';
@@ -668,7 +790,8 @@ for (let r=0;r<SECTORS;r++) for (let c=0;c<SECTORS;c++) {
     const mesh = new THREE.Mesh(geo, mat);
     mesh.rotation.x = -Math.PI/2; mesh.position.set(c*CELL+CELL/2, 0.02, r*CELL+CELL/2);
     mesh.receiveShadow = true; scene.add(mesh);
-    sectorMeshes[`${r}_${c}`] = {mesh, hazard:h, scanned:false, r, c, k: `${r}_${c}`};
+    const k = `S${r}_${c}`;
+    sectorMeshes[k] = {mesh, hazard:h, scanned:false, r, c, k};
     const edges = new THREE.EdgesGeometry(geo);
     const line = new THREE.LineSegments(edges, new THREE.LineBasicMaterial({color:0x223322, transparent:true, opacity:0.2}));
     line.rotation.x = -Math.PI/2; line.position.copy(mesh.position); line.position.y=0.03; scene.add(line);
@@ -788,7 +911,7 @@ registerObstacle(GRID/2, GRID/2, 4, 7); // Register the house as a solid obstacl
 // ─── FIRE EFFECTS ───
 const fireParticles = [];
 for (const key of FIRE) {
-    const [r,c] = key.split("_").map(Number);
+    const [r,c] = key.slice(1).split("_").map(Number);
     const cx = c*CELL+CELL/2, cz = r*CELL+CELL/2;
     for (let i=0;i<6;i++) {
         const flame = new THREE.Mesh(
@@ -804,7 +927,7 @@ for (const key of FIRE) {
 // Smoke
 const smokePlanes = [];
 for (const key of SMOKE) {
-    const [r,c] = key.split("_").map(Number);
+    const [r,c] = key.slice(1).split("_").map(Number);
     const cx = c*CELL+CELL/2, cz = r*CELL+CELL/2;
     for (let layer=0;layer<2;layer++) {
         const p = new THREE.Mesh(
@@ -871,7 +994,7 @@ for (let oi = obstacles.length - 1; oi >= 0; oi--) {
 // Sector queue
 const globalQueue = [];
 for (let r=0;r<SECTORS;r++) for (let c=0;c<SECTORS;c++) {
-    const k=`${r}_${c}`;
+    const k=`S${r}_${c}`;
     if (!NO_FLY.has(k)) globalQueue.push({r,c,k,hazard:hazardOf(r,c), assigned:false});
 }
 
@@ -901,7 +1024,7 @@ function getNextSector(d, droneIdx) {
         
         if (d.battery < totalCostEstimate + 2) {
             if (s.hazard === 'fire' && rejectedFire < 4) {
-                addThought(droneIdx, 'reason', `${DRONE_NAMES[droneIdx]} (${d.battery.toFixed(0)}% battery): S${s.k} [FIRE] costs ${totalCostEstimate.toFixed(1)}% — too expensive. Trying next sector.`);
+                addThought(droneIdx, 'reason', `${DRONE_NAMES[droneIdx]} (${d.battery.toFixed(0)}% battery): ${s.k} [FIRE] costs ${totalCostEstimate.toFixed(1)}% — too expensive. Trying next sector.`);
                 rejectedFire++;
             }
             continue;
@@ -916,9 +1039,9 @@ function getNextSector(d, droneIdx) {
     
     if (bestSector) {
         bestSector.assigned = true;
-        addThought(droneIdx, 'reason', `${DRONE_NAMES[droneIdx]} has ${d.battery.toFixed(0)}% battery. Assigning S${bestSector.k} [${bestSector.hazard.toUpperCase()}] (${bestCostObj.dist} units, ${bestCostObj.drain}× drain). Cost: ${bestCostObj.toCost}% + ${bestCostObj.retCost}% return = ${bestCostObj.total}%.`);
+        addThought(droneIdx, 'reason', `${DRONE_NAMES[droneIdx]} has ${d.battery.toFixed(0)}% battery. Assigning ${bestSector.k} [${bestSector.hazard.toUpperCase()}] (${bestCostObj.dist} units, ${bestCostObj.drain}× drain). Cost: ${bestCostObj.toCost}% + ${bestCostObj.retCost}% return = ${bestCostObj.total}%.`);
         if (bestSector.hazard === "fire") {
-            addThought(droneIdx, 'reason', `Sector S${bestSector.k} is in ACTIVE FIRE ZONE — high battery cost but survivors are likely trapped near fire fronts. Prioritizing rescue.`);
+            addThought(droneIdx, 'reason', `Sector ${bestSector.k} is in ACTIVE FIRE ZONE — high battery cost but survivors are likely trapped near fire fronts. Prioritizing rescue.`);
         }
         return bestSector;
     }
@@ -1071,10 +1194,8 @@ function askLLMForSector(d, i) {
     const payload = {
         drone_id: `drone_${i+1}`,
         battery: d.battery,
-        position: [d.group.position.x, d.group.position.y, d.group.position.z],
-        other_drones: [],
-        unscanned_sectors: {},
-        hazard_map: {}
+        current_pos: [d.group.position.x, d.group.position.y, d.group.position.z],
+        other_drones: []
     };
 
     // Add info about other drones to the payload
@@ -1116,36 +1237,32 @@ function askLLMForSector(d, i) {
     });
 
     // Take top 10 most relevant to avoid overwhelming the LLM
-    candidates.slice(0, 10).forEach(c => {
-        const sm = c.sm;
-        payload.unscanned_sectors[sm.k] = {
-            center: c.center,
-            distance: parseFloat(c.dist.toFixed(1)),
-            time_left: parseFloat(c.timeLeft.toFixed(1)),
-            hazard: sm.hazard.toUpperCase()
-        };
-        payload.hazard_map[sm.k] = {hazard: sm.hazard};
-    });
+    const topCandidates = candidates.slice(0, 10);
+    const candidateCount = topCandidates.length;
 
-    const candidateCount = Object.keys(payload.unscanned_sectors).length;
-    addThought(i, 'info', `Tactical: Found ${candidateCount} scannable sectors. Sending top candidates to Commander.`);
+    addThought(i, 'info', `Tactical: Found ${candidateCount} scannable sectors. Sending to Commander.`);
     
     if (candidateCount === 0) {
         addThought(i, 'warning', `No available sectors! All remaining are scanned or assigned to teammates.`);
     }
 
-    fetch('http://127.0.0.1:8000/decide', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify(payload)
-    })
-    .then(res => res.json())
+    // Real MCP Request to the LLM Brain Tool
+    mcpClient.callTool('get_high_level_decision', payload)
     .then(data => {
-        if (d.dead) return; // drone died while thinking! (e.g. manual kill)
+        if (d.dead) return; // drone died while thinking
         
-        
-        const decisionStr = data?.decision || 'undefined';
-        const reasonStr = data?.reasoning || 'No reasoning provided.';
+        // MCP tools return a CallToolResult object with `content`: [{type: "text", text: "..."}]
+        let resultObj = data;
+        if (data && data.content && data.content.length > 0) {
+            try {
+                resultObj = JSON.parse(data.content[0].text);
+            } catch(e) {
+                console.warn("[MCP] Failed to parse tool text output as JSON", data.content[0].text);
+            }
+        }
+
+        const decisionStr = (resultObj?.decision || 'undefined').toUpperCase().trim();
+        const reasonStr = resultObj?.reasoning || 'No reasoning provided.';
 
         if (decisionStr === '__RECALL__') {
             addThought(i, 'reason', `LLM chose __RECALL__: ${reasonStr}`);
@@ -1179,7 +1296,7 @@ function askLLMForSector(d, i) {
         }
     })
     .catch(err => {
-        addThought(i, 'warning', `LLM error: ${err.message}. Waiting...`);
+        addThought(i, 'warning', `LLM tool error: ${err.message}. Waiting...`);
         d.state = "idle";
     });
 }
@@ -1275,11 +1392,12 @@ const assignmentQueue = [];  // drone indices waiting for batch assignment
 let lastBatchTime = 0;
 
 function processBatchQueue() {
-    if (assignmentQueue.length === 0 || !useLLM || missionComplete) return;
+    if (assignmentQueue.length === 0 || !useLLM || missionComplete || isBatchThinking) return;
     
     const now = performance.now();
     if (now - lastBatchTime < 1000) return;  // Throttle: max once per second
     lastBatchTime = now;
+    isBatchThinking = true;
     
     addThought(-1, 'info', `COORDINATION: Batching orders for ${assignmentQueue.length} idle drone(s)...`);
     
@@ -1346,20 +1464,26 @@ function processBatchQueue() {
         return;
     }
     
-    fetch('http://127.0.0.1:8000/decide_batch', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({
-            idle_drones: idleDrones,
-            active_drones: activeDrones,
-            unscanned_sectors: unscannedSectors,
-            hazard_map: hazardMap
-        })
+    mcpClient.callTool('get_batch_decision', {
+        idle_drones: idleDrones,
+        active_drones: activeDrones,
+        unscanned_sectors: unscannedSectors,
+        hazard_map: hazardMap
     })
-    .then(res => res.json())
     .then(data => {
-        const assignments = data.assignments || {};
-        const reasoning = data.reasoning || 'No reasoning.';
+        let resultObj = data;
+        if (data && data.content && data.content.length > 0) {
+            try {
+                console.log("[MCP Batch] Tool Raw Output:", data.content[0].text);
+                resultObj = JSON.parse(data.content[0].text);
+                console.log("[MCP Batch] Parsed Result:", resultObj);
+            } catch(e) {
+                console.warn("[MCP] Failed to parse batch tool text output as JSON", data.content[0].text);
+            }
+        }
+
+        const assignments = resultObj.assignments || {};
+        const reasoning = resultObj.reasoning || 'No reasoning.';
         addThought(-1, 'reason', `COMMANDER: ${reasoning}`);
         
         batchIndices.forEach(idx => {
@@ -1400,6 +1524,8 @@ function processBatchQueue() {
             if (d.dead) return;
             const s = getNextSector(d, idx);
             if (s) {
+                const qEntry = globalQueue.find(q => q.k === s.k);
+                if (qEntry) qEntry.assigned = true;
                 d.target = {x: s.c * CELL + CELL / 2, z: s.r * CELL + CELL / 2, sector: s.k, hazard: s.hazard};
                 d.state = "moving";
             } else {
@@ -1407,6 +1533,9 @@ function processBatchQueue() {
                 d.state = "moving";
             }
         });
+    })
+    .finally(() => {
+        isBatchThinking = false;
     });
 }
 
@@ -1421,6 +1550,8 @@ function animate() {
     if (!isPaused) {
     elapsed += dt;
     frameCount++;
+
+    if (useLLM) processBatchQueue();
 
     // Fire animation
     fireParticles.forEach(f => {
@@ -1477,7 +1608,11 @@ function animate() {
         // Wake up idle drones at base if there are unassigned sectors
         if (d.state === "idle" && !d.recharging && !d.dead && missionStarted && !missionComplete) {
             if (useLLM) {
-                askLLMForSector(d, i);
+                if (!assignmentQueue.includes(i)) {
+                    d.state = "waiting_orders";
+                    assignmentQueue.push(i);
+                    addThought(i, 'info', `Waiting for swarm coordinator...`);
+                }
             } else {
                 const s = getNextSector(d, i);
                 if (s) {
@@ -1688,9 +1823,12 @@ function animate() {
                     document.getElementById('success-modal').style.display = 'flex';
                     d.state = "moving"; // We are already RTB-ing above
                 } else if (!missionComplete) {
-                    // IMMEDIATE ASSIGNMENT — no waiting!
+                    // IMMEDIATE ASSIGNMENT — push to batch queue
                     if (useLLM) {
-                        askLLMForSector(d, i);  // Non-blocking: drone enters 'thinking' then 'moving'
+                        if (!assignmentQueue.includes(i)) {
+                            d.state = "waiting_orders";
+                            assignmentQueue.push(i);
+                        }
                     } else {
                         const s = getNextSector(d, i);
                         if (s) {

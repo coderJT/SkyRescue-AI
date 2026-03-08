@@ -1,10 +1,11 @@
 import os
 from mcp.server.fastmcp import FastMCP
+from mcp.server.transport_security import TransportSecuritySettings
 from simulation.simulation_engine import SimulationEngine
 from langchain_mistralai import ChatMistralAI
 from langchain_core.messages import SystemMessage, HumanMessage
 
-mcp = FastMCP("Rescue Drone Server")
+mcp = FastMCP("Rescue Drone Server", transport_security=TransportSecuritySettings(enable_dns_rebinding_protection=False))
 
 # Shared simulation state (singleton)
 engine = SimulationEngine()
@@ -17,7 +18,7 @@ if api_key:
 
 
 @mcp.tool()
-def get_high_level_decision(drone_id: str, battery: float, current_pos: list[float], other_drones: list[dict]) -> dict:
+async def get_high_level_decision(drone_id: str, battery: float, current_pos: list[float], other_drones: list[dict]) -> dict:
     """
     Use the high-level Mistral LLM brain to decide the next move for a drone.
     This tool combines tactical recommendations with strategic swarm coordination.
@@ -66,7 +67,7 @@ REQUIRED JSON FORMAT:
 """
 
     try:
-        response = llm.invoke([
+        response = await llm.ainvoke([
             SystemMessage(content="You are a high-level rescue commander AI. You output ONLY valid JSON."),
             HumanMessage(content=prompt)
         ])
@@ -85,6 +86,85 @@ REQUIRED JSON FORMAT:
         return result
     except Exception as e:
         return {"decision": recommendations[0]["id"], "reasoning": f"Tactical fallback: {str(e)}"}
+
+@mcp.tool()
+async def get_batch_decision(idle_drones: list[dict], active_drones: list[dict], unscanned_sectors: dict, hazard_map: dict) -> dict:
+    """
+    Use the high-level Mistral LLM brain to coordinate batch assignments for multiple idle drones.
+    """
+    if not llm:
+        return {"error": "MISTRAL_API_KEY not set on server"}
+
+    if not unscanned_sectors:
+        return {"assignments": {d["id"]: "__RECALL__" for d in idle_drones}, "reasoning": "No scannable sectors remain."}
+
+    # Build multi-drone coordination prompt
+    prompt = f"""
+You are the GLOBAL SWARM COMMANDER for a critical Search & Rescue mission.
+You must assign targets to {len(idle_drones)} IDLE drones simultaneously.
+
+IDLE DRONES (Waiting for Orders):
+"""
+    for d in idle_drones:
+        prompt += f"- {d['id']}: Battery {d['battery']:.1f}% | Position {d['pos']}\n"
+
+    prompt += "\nACTIVE TEAMMATES (Already busy):\n"
+    for d in active_drones:
+        ts = d.get('target_sector') or 'None'
+        prompt += f"- {d['id']}: Position {d['pos']} | Target: {ts}\n"
+
+    prompt += """
+TACTICAL CANDIDATES:
+DANGER: Survivors in FIRE die in 60s, SMOKE in 180s, others in 600s.
+"""
+    for sid, s in unscanned_sectors.items():
+        prompt += f"- {sid}: {s['hazard']} | Time Remaining: {s['time_left']}s | Distance: {s['distance']} units\n"
+
+    prompt += """
+COMMANDERS COORDINATION GOAL:
+1. Assign EXACTLY ONE unique sector to each IDLE drone.
+2. GLOBAL OPTIMIZATION: Ensure the CLOSEST drone is assigned to the most critical (low time) fire areas.
+3. CONFLICT AVOIDANCE: Do NOT assign a sector that is already being targeted by an ACTIVE teammate.
+4. RECALL: If a drone has low battery or no good targets remain, assign "__RECALL__".
+
+REQUIRED JSON FORMAT:
+{
+    "assignments": {
+        "drone_1": "S2_3",
+        "drone_3": "__RECALL__"
+    },
+    "reasoning": "Coordinated batch assignment: drone_1 sent to nearby fire front (S2_3), drone_3 recalled for charging."
+}
+"""
+
+    try:
+        print(f"--- BATCH PROMPT for {len(idle_drones)} drones ---\n{prompt[:200]}...")
+        response = await llm.ainvoke([
+            SystemMessage(content="You are a swarm coordination AI. You output ONLY valid JSON."),
+            HumanMessage(content=prompt)
+        ])
+        
+        import json
+        content = response.content.strip()
+        print(f"--- LLM RAW RESPONSE ---\n{content}")
+        if content.startswith("```json"): content = content[7:-3]
+        elif content.startswith("```"): content = content[3:-3]
+        
+        result = json.loads(content)
+        # Final safety check: ensure every idle drone has an entry
+        for d in idle_drones:
+            if d['id'] not in result.get("assignments", {}):
+                result.setdefault("assignments", {})[d['id']] = "__RECALL__"
+                
+        return result
+    except Exception as e:
+        print(f"Error calling LLM for batch: {e}")
+        # Emergency fallback: Assign first available sector to first drone, others recall
+        fallback = {"assignments": {}, "reasoning": f"Emergency batch fallback: {str(e)}"}
+        sids = list(unscanned_sectors.keys())
+        for i, d in enumerate(idle_drones):
+            fallback["assignments"][d['id']] = sids[i] if i < len(sids) else "__RECALL__"
+        return fallback
 
 
 @mcp.tool()

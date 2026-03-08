@@ -34,22 +34,15 @@ class SimulationEngine:
             "drone_5": Drone("drone_5", 100, "active", (5, 5, 5)),
         }
 
-        # Survivors: (x, y, z, survival_limit_seconds)
-        self.survivors = []
-        raw_survivors = [
-            (25, 35, 0), (50, 50, 0), (65, 55, 0), 
-            (15, 75, 0), (80, 65, 0), (35, 85, 0), (72, 12, 0)
-        ]
-        for x, y, z in raw_survivors:
-            sid = self._get_sector_at(x, y)
-            limit = 600 # default 10 mins
-            if sid in self.fire_sector_ids: limit = 60
-            elif sid in self.smoke_sector_ids: limit = 180
-            self.survivors.append({"pos": (x, y, z), "limit": limit, "expired": False})
-
-        # --- Discovered survivors (found during scans) ---
-        self.discovered_survivors = []
-
+        # --- Sector Grid ---
+        self.grid_size = 200
+        self.sector_cols = 10
+        self.sector_rows = 10
+        self.sector_width = self.grid_size / self.sector_cols
+        self.sector_height = self.grid_size / self.sector_rows
+        self.sectors = {}
+        
+        # We need fire and no-fly sets defined before figuring out hazard per sector
         # --- Environment: No-Fly Zones (impassable obstacles) ---
         # Each zone: {"name", "sectors": [list of sector IDs], "reason"}
         self.no_fly_zones = [
@@ -66,7 +59,11 @@ class SimulationEngine:
         ]
         self.no_fly_sector_ids = set()
         for zone in self.no_fly_zones:
-            self.no_fly_sector_ids.update(zone["sectors"])
+            for macro_sid in zone["sectors"]:
+                r, c = int(macro_sid[1]), int(macro_sid[3])
+                for dr in (0, 1):
+                    for dc in (0, 1):
+                        self.no_fly_sector_ids.add(f"S{r*2+dr}_{c*2+dc}")
 
         # --- Environment: Fire Zones (hazardous, high battery drain) ---
         self.fire_zones = [
@@ -86,38 +83,27 @@ class SimulationEngine:
         self.fire_sector_ids = set()
         self.fire_multipliers = {}
         for zone in self.fire_zones:
-            for sid in zone["sectors"]:
-                self.fire_sector_ids.add(sid)
-                self.fire_multipliers[sid] = zone["battery_multiplier"]
+            for macro_sid in zone["sectors"]:
+                r, c = int(macro_sid[1]), int(macro_sid[3])
+                for dr in (0, 1):
+                    for dc in (0, 1):
+                        sid = f"S{r*2+dr}_{c*2+dc}"
+                        self.fire_sector_ids.add(sid)
+                        self.fire_multipliers[sid] = zone["battery_multiplier"]
 
-        # --- Environment: Smoke Zones (adjacent to fire, moderate penalty) ---
+        # --- Environment: Smoke Zones ---
         self.smoke_sector_ids = set()
-        self.smoke_multiplier = 1.5
-        # Auto-calculate smoke zones: any sector adjacent to a fire sector
         for sid in list(self.fire_sector_ids):
-            row, col = int(sid[1]), int(sid[3])
+            # Format is like "S3_4". split at "_"
+            parts = sid[1:].split("_")
+            row, col = int(parts[0]), int(parts[1])
             for dr, dc in [(-1,0),(1,0),(0,-1),(0,1)]:
                 nr, nc = row + dr, col + dc
-                if 0 <= nr < 5 and 0 <= nc < 5:
+                if 0 <= nr < self.sector_rows and 0 <= nc < self.sector_cols:
                     adj_id = f"S{nr}_{nc}"
                     if adj_id not in self.fire_sector_ids and adj_id not in self.no_fly_sector_ids:
                         self.smoke_sector_ids.add(adj_id)
 
-        # --- Environment: Wind ---
-        self.wind = {
-            "direction": "NE",  # Wind blowing north-east
-            "speed_kmh": 35,
-            "effect": "Drones flying against the wind (SW direction) use 1.3× battery",
-            "battery_multiplier_against": 1.3,
-        }
-
-        # --- Sector Grid ---
-        self.grid_size = 100
-        self.sector_cols = 5
-        self.sector_rows = 5
-        self.sector_width = self.grid_size / self.sector_cols
-        self.sector_height = self.grid_size / self.sector_rows
-        self.sectors = {}
         for row in range(self.sector_rows):
             for col in range(self.sector_cols):
                 sector_id = f"S{row}_{col}"
@@ -144,6 +130,49 @@ class SimulationEngine:
                     "assigned_to": None,
                     "survivors_found": [],
                 }
+
+        # Survivors: (x, y, z, survival_limit_seconds)
+        self.survivors = []
+        raw_survivors = [
+            (25, 35, 0), (50, 50, 0), (65, 55, 0), 
+            (15, 75, 0), (80, 65, 0), (35, 85, 0), (72, 12, 0)
+        ]
+        for x, y, z in raw_survivors:
+            # Note: in this tuple, the 2nd value was intended as 'z' (horizontal), mapping to y in 2D space. But let's just use z properly if tuple is (x, y, z). Wait, the hardcoded data is (25, 35, 0), so let's treat the middle value as z.
+            # actually let's unpack as x, z, y
+            pass
+        for x, z, y in raw_survivors:
+            sid = self._get_sector_at(x, z)
+            limit = 600 # default 10 mins
+            if sid in self.fire_sector_ids: limit = 60
+            elif sid in self.smoke_sector_ids: limit = 180
+            self.survivors.append({"pos": (x, y, z), "limit": limit, "expired": False})
+
+        # --- Discovered survivors (found during scans) ---
+        self.discovered_survivors = []
+
+        
+
+        # --- Environment: Smoke Zones (adjacent to fire, moderate penalty) ---
+        self.smoke_sector_ids = set()
+        self.smoke_multiplier = 1.5
+        # Auto-calculate smoke zones: any sector adjacent to a fire sector
+        for sid in list(self.fire_sector_ids):
+            row, col = int(sid[1]), int(sid[3])
+            for dr, dc in [(-1,0),(1,0),(0,-1),(0,1)]:
+                nr, nc = row + dr, col + dc
+                if 0 <= nr < 5 and 0 <= nc < 5:
+                    adj_id = f"S{nr}_{nc}"
+                    if adj_id not in self.fire_sector_ids and adj_id not in self.no_fly_sector_ids:
+                        self.smoke_sector_ids.add(adj_id)
+
+        # --- Environment: Wind ---
+        self.wind = {
+            "direction": "NE",  # Wind blowing north-east
+            "speed_kmh": 35,
+            "effect": "Drones flying against the wind (SW direction) use 1.3× battery",
+            "battery_multiplier_against": 1.3,
+        }
 
         # Mark no-fly zones as "scanned" (they can never be scanned)
         for sid in self.no_fly_sector_ids:
@@ -176,15 +205,15 @@ class SimulationEngine:
         self.log("Mission Reset: Grid cleared and timers restarted.")
         return {"status": "success", "message": "Mission state fully reset."}
 
-    def _get_sector_at(self, x, y):
+    def _get_sector_at(self, x, z):
         """Return the sector ID for a given coordinate."""
         col = min(int(x / self.sector_width), self.sector_cols - 1)
-        row = min(int(y / self.sector_height), self.sector_rows - 1)
+        row = min(int(z / self.sector_height), self.sector_rows - 1)
         return f"S{row}_{col}"
 
-    def _battery_multiplier_at(self, x, y):
+    def _battery_multiplier_at(self, x, z):
         """Return the battery drain multiplier at a given position."""
-        sid = self._get_sector_at(x, y)
+        sid = self._get_sector_at(x, z)
         if sid in self.fire_multipliers:
             return self.fire_multipliers[sid]
         if sid in self.smoke_sector_ids:
@@ -212,13 +241,13 @@ class SimulationEngine:
             return {"error": f"Drone {drone_id} is {drone.status}, cannot move"}
 
         # Check if destination is in a no-fly zone
-        dest_sector = self._get_sector_at(x, y)
+        dest_sector = self._get_sector_at(x, z)
         if dest_sector in self.no_fly_sector_ids:
-            self.log(f"BLOCKED: {drone_id} cannot enter no-fly zone {dest_sector} at ({x},{y})")
-            return {"error": f"Cannot fly to ({x},{y}) — sector {dest_sector} is a no-fly zone"}
+            self.log(f"BLOCKED: {drone_id} cannot enter no-fly zone {dest_sector} at ({x},{z})")
+            return {"error": f"Cannot fly to ({x},{z}) — sector {dest_sector} is a no-fly zone"}
 
         # Calculate environmental drain multiplier at destination
-        multiplier = self._battery_multiplier_at(x, y)
+        multiplier = self._battery_multiplier_at(x, z)
 
         # Apply extra drain for hazardous zones
         old_coords = drone.coordinates
@@ -248,7 +277,7 @@ class SimulationEngine:
             return {"error": f"Drone {drone_id} is {drone.status}, cannot scan"}
 
         # Extra scan cost in fire zones
-        multiplier = self._battery_multiplier_at(drone.coordinates[0], drone.coordinates[1])
+        multiplier = self._battery_multiplier_at(drone.coordinates[0], drone.coordinates[2])
         
         # Check survival limits
         import time
