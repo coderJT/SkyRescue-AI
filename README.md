@@ -178,32 +178,21 @@ INFO:     Uvicorn running on http://0.0.0.0:8000
 
 ### 3. Start the MCP Server (via Prefect)
 
-Alternatively, you can run the server using **Prefect** for orchestration and monitoring:
+### 3. Start the MCP Server (Local)
+
+Simply run the server locally. The browser-based simulation is configured to connect to `http://127.0.0.1:8000/sse`.
 
 ```bash
 # Set your Mistral API key
 export MISTRAL_API_KEY=your_api_key_here
 
-# Run the Prefect flow to start the server
-python prefect_mcp.py
+# Run the standard SSE server
+python run_server.py
 ```
 
-This will create a long-running deployment that you can monitor via your Prefect dashboard.
+*Note: You can also use `python prefect_mcp.py` to run via Prefect locally for health tracking.*
 
-### 4. Deploy to Prefect Horizon (Managed Hosting)
-
-To host your MCP server on the managed **Prefect Horizon** platform:
-
-1.  **Push to GitHub**: Ensure your latest code (including `requirements.txt` and `mcp_app/mcp_server.py`) is pushed to a GitHub repository.
-2.  **Sign in to Horizon**: Go to [horizon.prefect.io](https://horizon.prefect.io) and sign in with GitHub.
-3.  **Connect Repo**: Select your `vhack-cs3` repository.
-4.  **Configure**: Point Horizon to `horizon_server.py:mcp` for the FastMCP instance.
-5.  **Deploy**: Click **Deploy**. Horizon will automatically:
-    - Build a container for your server.
-    - Install all dependencies from `requirements.txt`.
-    - Provide a unique, authenticated HTTPS URL for your MCP server.
-
-### 5. Launch the 3D Simulation
+### 4. Launch the 3D Simulation
 
 Open `simulation/simulation.html` in your browser:
 

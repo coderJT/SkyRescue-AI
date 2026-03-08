@@ -3,13 +3,14 @@ import sys
 
 # Ensure project root is in PYTHONPATH for cloud deployment
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from fastmcp import FastMCP
+from mcp.server.fastmcp import FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
+from starlette.middleware.cors import CORSMiddleware
 from simulation.simulation_engine import SimulationEngine
 from langchain_mistralai import ChatMistralAI
 from langchain_core.messages import SystemMessage, HumanMessage
 
-mcp = FastMCP("Rescue Drone Server")
+mcp = FastMCP("Rescue Drone Server", transport_security=TransportSecuritySettings(enable_dns_rebinding_protection=False))
 
 # Shared simulation state (singleton)
 engine = SimulationEngine()

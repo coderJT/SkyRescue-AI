@@ -415,7 +415,7 @@ const mcpClient = {
     nextId: 1,
     connect: function() {
         if (this.connected) return;
-        const sseUrl = 'https://usm-cs3.fastmcp.app/mcp/sse';
+        const sseUrl = 'http://127.0.0.1:8000/sse';
         console.log(`[MCP] Connecting to ${sseUrl}...`);
         
         try {
