@@ -61,7 +61,7 @@
             position: absolute; bottom: 12px; left: 12px;
             background: rgba(10,15,30,0.92); border: 1px solid rgba(255,100,0,0.2);
             border-radius: 8px; padding: 12px 16px; min-width: 260px; max-height: 220px;
-            overflow-y: auto; color: #ccd; font-size: 11px;
+            overflow-y: auto; color: #ccd; font-size: 11px; pointer-events: auto;
         }
         #status h3 { color: #ff8800; margin-bottom: 6px; font-size: 12px; letter-spacing: 2px; }
         .sr { display: flex; justify-content: space-between; margin: 2px 0; }
@@ -69,6 +69,16 @@
         .sv { color: #aab; font-weight: 600; }
         .sv.det { color: #76ff03; }
         .sv.low { color: #ffaa00; }
+        #speed-slider-box { margin-top: 6px; display: flex; align-items: center; gap: 6px; }
+        #speed-slider-box label { color: #888; font-size: 10px; }
+        #speed-slider { width: 100px; accent-color: #ff8800; cursor: pointer; }
+        #speed-val { color: #ff8800; font-size: 10px; font-weight: 600; min-width: 28px; }
+        #daynight-btn {
+            background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.2);
+            color: #ccd; padding: 3px 10px; border-radius: 4px; cursor: pointer;
+            font-size: 10px; font-family: inherit; transition: all 0.2s; pointer-events: auto;
+        }
+        #daynight-btn:hover { background: rgba(255,255,255,0.15); }
         #alert-box {
             position: absolute; bottom: 12px; right: 12px;
             background: rgba(118,255,3,0.12); border: 1px solid rgba(118,255,3,0.4);
@@ -91,6 +101,58 @@
         .drone-label .dl-bat.low { color: #ffaa00; }
         .drone-label .dl-bat.dead { color: #ff3322; }
         .drone-label .dl-rtb { color: #66ccff; font-size: 8px; }
+        #start-controls {
+            position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); z-index: 20;
+            background: rgba(10,15,25,0.85); padding: 30px; border-radius: 16px; border: 2px solid #334;
+            display: flex; flex-direction: column; align-items: center; gap: 20px;
+            pointer-events: auto; backdrop-filter: blur(8px);
+            box-shadow: 0 10px 40px rgba(0,0,0,0.8);
+        }
+        #start-controls label {
+            color: #00ff88; font-weight: bold; letter-spacing: 2px; font-size: 18px; text-transform: uppercase;
+        }
+        #start-controls input[type="range"] {
+            width: 250px; accent-color: #00ff88; cursor: pointer; height: 6px;
+        }
+        #start-btn {
+            background: linear-gradient(135deg, #ff6600, #ff3300); border: 2px solid #ff8800;
+            color: #fff; padding: 16px 40px; border-radius: 10px; cursor: pointer;
+            font-size: 18px; font-weight: 700; font-family: inherit;
+            letter-spacing: 3px; text-transform: uppercase;
+            box-shadow: 0 0 30px rgba(255,100,0,0.3), 0 4px 15px rgba(0,0,0,0.4);
+            transition: all 0.3s;
+        }
+        #start-btn:hover { transform: scale(1.05); box-shadow: 0 0 50px rgba(255,100,0,0.6); }
+
+        /* Success Popup */
+        #success-modal {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0,0,0,0.7); display: none; align-items: center; justify-content: center;
+            z-index: 100; backdrop-filter: blur(8px); pointer-events: auto;
+        }
+        #success-content {
+            background: linear-gradient(135deg, rgba(30,40,60,0.9), rgba(10,15,25,0.95));
+            border: 2px solid #00ff88; border-radius: 20px; padding: 40px;
+            text-align: center; color: #fff; max-width: 450px; width: 90%;
+            box-shadow: 0 0 50px rgba(0,255,136,0.3);
+            animation: popIn 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+        }
+        @keyframes popIn {
+            0% { transform: scale(0.5); opacity: 0; }
+            100% { transform: scale(1); opacity: 1; }
+        }
+        #success-content h2 {
+            font-size: 32px; color: #00ff88; margin-bottom: 20px;
+            letter-spacing: 4px; text-transform: uppercase;
+        }
+        .stat-row { font-size: 18px; margin: 10px 0; color: #ccd; }
+        .stat-row b { color: #fff; }
+        #restart-btn-big {
+            margin-top: 30px; background: #00ff88; color: #000; border: none;
+            padding: 12px 30px; border-radius: 8px; font-weight: bold; font-size: 18px;
+            cursor: pointer; transition: 0.2s;
+        }
+        #restart-btn-big:hover { background: #00cc6e; transform: scale(1.05); }
     </style>
 </head>
 <body>
@@ -103,6 +165,7 @@
         <button class="cam-btn" onclick="switchCam(2)">🛩 Drone 3 <span style="color:#445;font-size:9px">[3]</span></button>
         <button class="cam-btn" onclick="switchCam(3)">🛩 Drone 4 <span style="color:#445;font-size:9px">[4]</span></button>
         <button class="cam-btn" onclick="switchCam(4)">🛩 Drone 5 <span style="color:#445;font-size:9px">[5]</span></button>
+        <button class="cam-btn" onclick="switchCam(-2)">🗺 World <span style="color:#445;font-size:9px">[6]</span></button>
     </div>
     <div id="right-panel">
         <div id="minimap-box">
@@ -114,9 +177,34 @@
             <div id="thoughts"></div>
         </div>
     </div>
-    <div id="status"><h3>⬡ MISSION</h3><div id="sc">Initializing...</div></div>
+    <div id="status">
+        <h3>⬡ MISSION</h3><div id="sc">Initializing...</div>
+        <div id="speed-slider-box">
+            <label>⚡ Speed</label>
+            <input type="range" id="speed-slider" min="5" max="100" value="20" oninput="updateSpeed(this.value)">
+            <span id="speed-val">0.20</span>
+            <button id="daynight-btn" onclick="toggleDayNight()">🌙 Night</button>
+            <button id="daynight-btn" onclick="location.reload()" style="background:rgba(255,50,50,0.15);border-color:rgba(255,50,50,0.3);color:#ff6655">↻ Restart</button>
+        </div>
+    </div>
     <div id="alert-box">🔥 SURVIVOR DETECTED</div>
     <div id="instr">Press 0-5 to switch cameras · Click+Drag to orbit</div>
+    
+    <div id="start-controls">
+        <label>Survivors to Rescue: <span id="surv-count-val" style="color:#fff; font-size:20px; font-weight:900;">5</span></label>
+        <input type="range" id="surv-count" min="1" max="15" value="5" oninput="document.getElementById('surv-count-val').textContent=this.value">
+        <button id="start-btn" onclick="startMission()">START SIMULATION</button>
+    </div>
+
+    <div id="success-modal">
+        <div id="success-content">
+            <h2>Mission Success</h2>
+            <div class="stat-row">Time Elapsed: <b id="final-time">-</b></div>
+            <div class="stat-row">Survivors Found: <b id="final-found">-</b></div>
+            <div class="stat-row">Sectors Scanned: <b id="final-sectors">100/100</b></div>
+            <button id="restart-btn-big" onclick="location.reload()">RESTART MISSION</button>
+        </div>
+    </div>
     <div id="drone-label-0" class="drone-label"></div>
     <div id="drone-label-1" class="drone-label"></div>
     <div id="drone-label-2" class="drone-label"></div>
@@ -133,7 +221,12 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 
 // ─── CONFIG ───
 const GRID = 200, SECTORS = 10, CELL = GRID / SECTORS;  // 10×10 = each sub-tile is 20×20
-const SCAN_RADIUS = 10, MOVE_SPEED = 0.6;
+const SCAN_RADIUS = 14.5; // Enough to radius-cover a 20x20 cell (sqrt(10^2+10^2) ≈ 14.14)
+let MOVE_SPEED = 0.2;
+window.updateSpeed = function(v) {
+    MOVE_SPEED = v / 100;
+    document.getElementById('speed-val').textContent = MOVE_SPEED.toFixed(2);
+};
 const DRAIN_PER_UNIT = 0.06; // battery % drained per unit of distance traveled (clear zone)
 const DRONE_FLY_HEIGHT = 6;
 const OBSTACLE_RADIUS = 1.5;
@@ -141,10 +234,10 @@ const AVOIDANCE_LOOKAHEAD = 6;
 const AVOIDANCE_STRENGTH = 0.7;
 const DRONE_COLORS = ['#3388ff','#ff5533','#33cc55','#ff9900','#cc44ff'];
 const DRONE_NAMES = ['Drone 1','Drone 2','Drone 3','Drone 4','Drone 5'];
-const SURVIVORS = [
-    {x:50,y:0,z:70},{x:100,y:0,z:100},{x:130,y:0,z:110},
-    {x:30,y:0,z:150},{x:160,y:0,z:130},{x:70,y:0,z:170},{x:144,y:0,z:24}
-];
+const SURVIVORS = [];
+const BASE = {x: 5, z: 5};
+const drones = [];
+const scanSpheres = [];
 
 // Hazards defined on original 5×5 macro-grid, expanded to 10×10
 const NO_FLY_MACRO = ["1_1","2_1","0_4","1_4"];
@@ -183,8 +276,8 @@ function hazardOf(r,c) {
 // ─── OBSTACLE REGISTRY (for collision avoidance) ───
 const obstacles = []; // {x, z, radius}
 
-function registerObstacle(x, z, r) {
-    obstacles.push({x, z, radius: r || OBSTACLE_RADIUS});
+function registerObstacle(x, z, r, h) {
+    obstacles.push({x, z, radius: r || OBSTACLE_RADIUS, height: h || 20});
 }
 
 // ─── THINKING LOG + MCP COMMUNICATIONS ───
@@ -260,13 +353,6 @@ function drawMinimap() {
         mapCtx.strokeStyle = '#2a3a2a'; mapCtx.lineWidth = 0.5;
         mapCtx.strokeRect(x+1, y+1, MAP_CELL-2, MAP_CELL-2);
         if (scanned && h !== 'no_fly') { mapCtx.fillStyle = '#33aa3322'; mapCtx.fillRect(x+1, y+1, MAP_CELL-2, MAP_CELL-2); }
-        if (h === 'no_fly') {
-            mapCtx.strokeStyle = '#55444466'; mapCtx.lineWidth = 1;
-            mapCtx.beginPath();
-            mapCtx.moveTo(x+4, y+4); mapCtx.lineTo(x+MAP_CELL-4, y+MAP_CELL-4);
-            mapCtx.moveTo(x+MAP_CELL-4, y+4); mapCtx.lineTo(x+4, y+MAP_CELL-4);
-            mapCtx.stroke();
-        }
         if (h === 'fire') { mapCtx.fillStyle = '#ff440066'; mapCtx.font = '12px sans-serif'; mapCtx.fillText('🔥', x+MAP_CELL/2-7, y+MAP_CELL/2+5); }
     }
     // Obstacles as tiny dots on the map
@@ -326,9 +412,8 @@ scene.background = new THREE.Color(0x060810);
 scene.fog = new THREE.FogExp2(0x060810, 0.003);
 const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance" });
 renderer.setSize(innerWidth, innerHeight);
-renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
-renderer.shadowMap.enabled = true;
-renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.setPixelRatio(Math.min(devicePixelRatio, 1.5));
+renderer.shadowMap.enabled = false;
 document.body.appendChild(renderer.domElement);
 
 const cam = new THREE.PerspectiveCamera(55, innerWidth/innerHeight, 0.1, 1000);
@@ -341,16 +426,34 @@ controls.maxPolarAngle = Math.PI / 2.1;
 let activeDrone = -1;
 
 // Lights
-scene.add(new THREE.AmbientLight(0x223344, 0.4));
+const ambientLight = new THREE.AmbientLight(0x223344, 0.4);
+scene.add(ambientLight);
 const sun = new THREE.DirectionalLight(0xffddaa, 0.6);
 sun.position.set(60, 120, 40);
-sun.castShadow = true;
-sun.shadow.mapSize.set(2048,2048);
-sun.shadow.camera.far = 500;
-sun.shadow.camera.left = sun.shadow.camera.bottom = -250;
-sun.shadow.camera.right = sun.shadow.camera.top = 250;
 scene.add(sun);
-scene.add(new THREE.HemisphereLight(0x112233, 0x221100, 0.25));
+const hemiLight = new THREE.HemisphereLight(0x112233, 0x221100, 0.25);
+scene.add(hemiLight);
+
+let isNight = true;
+window.toggleDayNight = function() {
+    isNight = !isNight;
+    const btn = document.getElementById('daynight-btn');
+    if (isNight) {
+        scene.background.setHex(0x060810);
+        scene.fog.color.setHex(0x060810);
+        ambientLight.intensity = 0.4;
+        sun.intensity = 0.6;
+        hemiLight.intensity = 0.25;
+        btn.textContent = '🌙 Night';
+    } else {
+        scene.background.setHex(0x87CEEB);
+        scene.fog.color.setHex(0x87CEEB);
+        ambientLight.intensity = 1.2;
+        sun.intensity = 1.4;
+        hemiLight.intensity = 0.8;
+        btn.textContent = '☀️ Day';
+    }
+};
 
 // Ground
 const ground = new THREE.Mesh(
@@ -358,7 +461,38 @@ const ground = new THREE.Mesh(
     new THREE.MeshStandardMaterial({color:0x0f1f0f, roughness:0.95})
 );
 ground.rotation.x = -Math.PI/2; ground.position.set(GRID/2, -0.01, GRID/2);
-ground.receiveShadow = true; scene.add(ground);
+ground.receiveShadow = false; scene.add(ground);
+
+// ─── BASE STRUCTURE ───
+// Charging Tower
+const towerG = new THREE.Group();
+const towerBaseGeo = new THREE.CylinderGeometry(4, 5, 2, 8);
+const towerBase = new THREE.Mesh(towerBaseGeo, new THREE.MeshStandardMaterial({color: 0x333333, metalness: 0.8, roughness: 0.2}));
+towerG.add(towerBase);
+
+const towerSpireGeo = new THREE.CylinderGeometry(0.5, 2.5, 25, 8);
+const towerSpire = new THREE.Mesh(towerSpireGeo, new THREE.MeshStandardMaterial({color: 0x222222, metalness: 0.9, roughness: 0.1}));
+towerSpire.position.y = 12.5;
+towerG.add(towerSpire);
+
+// Emissive Core
+const coreGeo = new THREE.SphereGeometry(1.5, 16, 16);
+const coreMat = new THREE.MeshStandardMaterial({color: 0x00ffff, emissive: 0x00ffff, emissiveIntensity: 2});
+const core = new THREE.Mesh(coreGeo, coreMat);
+core.position.y = 23;
+towerG.add(core);
+
+// Lattice Rings
+for (let i=0; i<3; i++) {
+    const ringGeo = new THREE.TorusGeometry(3.5 - i*0.8, 0.2, 8, 24);
+    const ring = new THREE.Mesh(ringGeo, new THREE.MeshStandardMaterial({color: 0x555555, metalness: 0.8}));
+    ring.rotation.x = Math.PI/2;
+    ring.position.y = 18 + i*3;
+    towerG.add(ring);
+}
+
+towerG.position.set(BASE.x, 0, BASE.z);
+scene.add(towerG);
 
 // Sector tiles
 const sectorMeshes = {};
@@ -399,9 +533,9 @@ function spawnTree(cx, cz, tall, burned) {
         burned ? treeMaterials.trunkBurned : treeMaterials.trunk
     );
     trunk.position.set(cx, trunkH/2, cz);
-    trunk.castShadow = true;
+
     scene.add(trunk);
-    registerObstacle(cx, cz, 1.0);
+    registerObstacle(cx, cz, 1.2, trunkH + (burned ? 0 : 6)); // include canopy height buffer
 
     if (!burned) {
         const canopyR = 2 + Math.random()*2.5;
@@ -411,7 +545,7 @@ function spawnTree(cx, cz, tall, burned) {
             mats[Math.floor(Math.random()*mats.length)]
         );
         canopy.position.set(cx + (Math.random()-0.5)*1.5, trunkH + canopyR*0.4, cz + (Math.random()-0.5)*1.5);
-        canopy.castShadow = true;
+
         scene.add(canopy);
         // Second smaller canopy cluster for density
         if (Math.random() > 0.4) {
@@ -420,7 +554,7 @@ function spawnTree(cx, cz, tall, burned) {
                 mats[Math.floor(Math.random()*mats.length)]
             );
             c2.position.set(cx + (Math.random()-0.5)*3, trunkH - 1 + Math.random()*2, cz + (Math.random()-0.5)*3);
-            c2.castShadow = true;
+
             scene.add(c2);
         }
     } else {
@@ -466,8 +600,8 @@ for (const key of NO_FLY) {
             const rx = cx-6+Math.random()*12, rz = cz-6+Math.random()*12;
             rock.position.set(rx, h/2, rz);
             rock.rotation.set(Math.random()*0.2, Math.random()*Math.PI, Math.random()*0.2);
-            rock.castShadow = true; scene.add(rock);
-            registerObstacle(rx, rz, Math.max(w,dd)/2 + 0.5);
+            scene.add(rock);
+            registerObstacle(rx, rz, Math.max(w,dd)/2 + 0.5, h);
         }
     }
 }
@@ -477,7 +611,6 @@ const fireParticles = [];
 for (const key of FIRE) {
     const [r,c] = key.split("_").map(Number);
     const cx = c*CELL+CELL/2, cz = r*CELL+CELL/2;
-    const fl = new THREE.PointLight(0xff4400, 1.5, 25); fl.position.set(cx, 5, cz); scene.add(fl);
     for (let i=0;i<6;i++) {
         const flame = new THREE.Mesh(
             new THREE.ConeGeometry(0.3+Math.random()*0.8, 1.5+Math.random()*4, 5),
@@ -507,40 +640,29 @@ for (const key of SMOKE) {
 
 // Survivors
 const survivorMeshes = [];
-SURVIVORS.forEach((s,i) => {
-    const mesh = new THREE.Mesh(new THREE.SphereGeometry(0.8,12,12), new THREE.MeshStandardMaterial({color:0xff2200, emissive:0xff3300, emissiveIntensity:0.7, roughness:0.3}));
-    mesh.position.set(s.x, 0.8, s.z); mesh.castShadow=true; scene.add(mesh);
-    const ring = new THREE.Mesh(new THREE.TorusGeometry(1.4,0.08,8,24), new THREE.MeshBasicMaterial({color:0xff4400, transparent:true, opacity:0.3}));
-    ring.rotation.x = -Math.PI/2; ring.position.set(s.x, 0.2, s.z); scene.add(ring);
-    const light = new THREE.PointLight(0xff3300, 0.8, 8); light.position.set(s.x, 2, s.z); scene.add(light);
-    survivorMeshes.push({body:mesh, ring, light, found:false});
-});
 
 // ─── OBSTACLE AVOIDANCE (repulsive force field + stuck escape) ───
 function computeAvoidanceSteer(pos, desiredDir) {
     let steerX = 0, steerZ = 0;
     let nearestDist = Infinity;
     for (const obs of obstacles) {
+        // Height check: if drone is well ABOVE the obstacle, ignore it
+        if (pos.y > obs.height + 1.5) continue;
+
         const dx = obs.x - pos.x, dz = obs.z - pos.z;
         const dist = Math.sqrt(dx*dx + dz*dz);
-        const safeZone = obs.radius + 2;  // how close is "too close"
+        const safeZone = obs.radius + 1.5;
         if (dist < AVOIDANCE_LOOKAHEAD + safeZone && dist > 0.01) {
             if (dist < nearestDist) nearestDist = dist;
-            // Repulsive force: push AWAY from obstacle, stronger when closer
-            const urgency = Math.max(0, 1 - dist / (AVOIDANCE_LOOKAHEAD + safeZone));
-            const repelX = -(dx/dist) * urgency * urgency;
-            const repelZ = -(dz/dist) * urgency * urgency;
-            steerX += repelX;
-            steerZ += repelZ;
+            const urgency = Math.pow(Math.max(0, 1 - dist / (AVOIDANCE_LOOKAHEAD + safeZone)), 2);
+            steerX -= (dx/dist) * urgency * 1.8;
+            steerZ -= (dz/dist) * urgency * 1.8;
         }
     }
     return {x: steerX, z: steerZ, blocked: nearestDist < 3.5};
 }
 
 // ─── DRONES ───
-const drones = [];
-const scanSpheres = [];
-const BASE = {x: 5, z: 5};
 const PATH_SAMPLE_INTERVAL = 5;
 let frameCount = 0;
 
@@ -551,18 +673,12 @@ for (let i=0;i<5;i++) {
         new THREE.BoxGeometry(1.2,0.35,1.2),
         new THREE.MeshStandardMaterial({color:cHex, metalness:0.7, roughness:0.2, emissive:cHex, emissiveIntensity:0.3})
     );
-    body.castShadow=true; g.add(body);
+    body.castShadow=false; g.add(body);
     const rotors = [];
     for (const [ax,az] of [[1,1],[-1,1],[1,-1],[-1,-1]]) {
         const rotor = new THREE.Mesh(new THREE.CylinderGeometry(0.45,0.45,0.03,10), new THREE.MeshBasicMaterial({color:0x88ccff, transparent:true, opacity:0.35}));
         rotor.position.set(ax*0.9, 0.25, az*0.9); g.add(rotor); rotors.push(rotor);
     }
-    // Drone headlight
-    const hl = new THREE.SpotLight(cHex, 1.5, 15, Math.PI/6, 0.5);
-    hl.position.set(0, -0.2, 0.8);
-    hl.target.position.set(0, -3, 4);
-    g.add(hl); g.add(hl.target);
-    const dl = new THREE.PointLight(cHex, 0.5, 5); dl.position.set(0,-0.3,0); g.add(dl);
     g.position.set(BASE.x + i*2, DRONE_FLY_HEIGHT, BASE.z + i*2);
     scene.add(g);
     const scanMesh = new THREE.Mesh(
@@ -573,13 +689,16 @@ for (let i=0;i<5;i++) {
     scanSpheres.push(scanMesh);
 
     drones.push({
-        group: g, rotors, light: dl, battery: 100,
+        group: g, rotors, battery: 100,
         target: null, state: "idle", scanTimer: 0, recharging: false,
         path: [{x: g.position.x, z: g.position.z}],
         sectorsScanned: 0, avoidCount: 0,
-        // Stuck detection + bypass
+        // Stuck detection + escape protocol
         stuckCheck: {x: g.position.x, z: g.position.z, frame: 0},
-        bypassFrames: 0,
+        escapeMode: "none", // "none", "rising", "backtrack"
+        escapeTimer: 0,
+        defaultHeight: DRONE_FLY_HEIGHT,
+        targetHeight: DRONE_FLY_HEIGHT,
         dead: false,
     });
 }
@@ -595,53 +714,121 @@ for (let oi = obstacles.length - 1; oi >= 0; oi--) {
 const globalQueue = [];
 for (let r=0;r<SECTORS;r++) for (let c=0;c<SECTORS;c++) {
     const k=`${r}_${c}`;
-    if (!NO_FLY.has(k)) globalQueue.push({r,c,k,hazard:hazardOf(r,c)});
+    if (!NO_FLY.has(k)) globalQueue.push({r,c,k,hazard:hazardOf(r,c), assigned:false});
 }
-globalQueue.sort((a,b) => {
-    const pa = a.hazard==="fire"?0:a.hazard==="smoke"?1:2;
-    const pb = b.hazard==="fire"?0:b.hazard==="smoke"?1:2;
-    return pa-pb || Math.hypot(a.c*CELL+CELL/2-GRID/2,a.r*CELL+CELL/2-GRID/2) - Math.hypot(b.c*CELL+CELL/2-GRID/2,b.r*CELL+CELL/2-GRID/2);
-});
-let queueIdx = 0;
-function getNextSector() {
-    while (queueIdx < globalQueue.length) {
-        const s = globalQueue[queueIdx++];
-        if (!sectorMeshes[s.k].scanned) return s;
+
+function getNextSector(dronePos) {
+    let bestDist = Infinity;
+    let bestSector = null;
+
+    for (let i = 0; i < globalQueue.length; i++) {
+        const s = globalQueue[i];
+        if (s.assigned || sectorMeshes[s.k].scanned) continue;
+        
+        const px = s.c * CELL + CELL / 2;
+        const pz = s.r * CELL + CELL / 2;
+        const dist = Math.hypot(px - dronePos.x, pz - dronePos.z);
+        
+        // Priority multiplier (lower is better): Fire = 0.1x distance, Smoke = 0.5x distance, Clear = 1x distance
+        let priorityMult = s.hazard === "fire" ? 0.1 : (s.hazard === "smoke" ? 0.5 : 1.0);
+        let score = dist * priorityMult;
+        
+        if (score < bestDist) {
+            bestDist = score;
+            bestSector = s;
+        }
+    }
+    
+    if (bestSector) {
+        bestSector.assigned = true;
+        return bestSector;
     }
     return null;
 }
 
-// Assign initial targets
-drones.forEach((d,i) => {
-    const s = getNextSector();
-    if (s) {
-        d.target = {x: s.c*CELL+CELL/2, z: s.r*CELL+CELL/2, sector: s.k, hazard: s.hazard};
-        d.state = "moving";
-        const hLabel = s.hazard !== 'clear' ? ` ⚠${s.hazard.toUpperCase()}` : '';
-        addMCP(i, 'call', 'get_fleet_status', {}, {drone_id:`drone_${i+1}`, battery:100, status:'active'});
-        addMCP(i, 'call', 'get_hazard_map', {sector:s.k}, {hazard:s.hazard, scannable:true});
-        addThought(i, 'reason', `Assigned → sector ${s.k}${hLabel}. Est. distance: ${Math.hypot(d.group.position.x-d.target.x, d.group.position.z-d.target.z).toFixed(0)}u`);
-        if (s.hazard === 'fire') addThought(i, 'danger', `FIRE ZONE — 3× drain. High rescue priority.`);
-        addMCP(i, 'call', 'move_to', {drone_id:`drone_${i+1}`, x:d.target.x, z:d.target.z}, {status:'moving', target:s.k});
-        addThought(i, 'action', `Navigating through forest to (${d.target.x.toFixed(0)}, ${d.target.z.toFixed(0)})...`);
+// Assign initial targets (called by start button)
+let missionStarted = false;
+let missionStartTime = 0;
+let missionComplete = false;
+function formatTime(sec) {
+    const m = Math.floor(sec/60), s = Math.floor(sec%60);
+    return `${m}m ${s.toString().padStart(2,'0')}s`;
+}
+window.startMission = function() {
+    if (missionStarted) return;
+    missionStarted = true;
+    missionStartTime = performance.now();
+    document.getElementById('start-controls').style.display = 'none';
+
+    // Spawn Survivors dynamically
+    const count = parseInt(document.getElementById('surv-count').value);
+    for(let i=0; i<count; i++) {
+        let valid = false;
+        let sx, sz;
+        while(!valid) {
+            sx = 5 + Math.random() * (GRID-10);
+            sz = 5 + Math.random() * (GRID-10);
+            const c = Math.floor(sx/CELL);
+            const r = Math.floor(sz/CELL);
+            if (hazardOf(r,c) !== 'no_fly') valid = true;
+        }
+        SURVIVORS.push({x:sx, y:0, z:sz});
+
+        const mesh = new THREE.Mesh(new THREE.SphereGeometry(0.8,12,12), new THREE.MeshStandardMaterial({color:0xff2200, emissive:0xff3300, emissiveIntensity:0.7, roughness:0.3}));
+        mesh.position.set(sx, 0.8, sz); scene.add(mesh);
+        const ring = new THREE.Mesh(new THREE.TorusGeometry(1.4,0.08,8,24), new THREE.MeshBasicMaterial({color:0xff4400, transparent:true, opacity:0.3}));
+        ring.rotation.x = -Math.PI/2; ring.position.set(sx, 0.2, sz); scene.add(ring);
+        survivorMeshes.push({body:mesh, ring, found:false});
     }
-});
+    drones.forEach((d,i) => {
+        const s = getNextSector(d.group.position);
+        if (s) {
+            d.target = {x: s.c*CELL+CELL/2, z: s.r*CELL+CELL/2, sector: s.k, hazard: s.hazard};
+            d.state = "moving";
+            const hLabel = s.hazard !== 'clear' ? ` ⚠${s.hazard.toUpperCase()}` : '';
+            addMCP(i, 'call', 'get_fleet_status', {}, {drone_id:`drone_${i+1}`, battery:100, status:'active'});
+            addMCP(i, 'call', 'get_hazard_map', {sector:s.k}, {hazard:s.hazard, scannable:true});
+            addThought(i, 'reason', `Assigned → sector ${s.k}${hLabel}. Est. distance: ${Math.hypot(d.group.position.x-d.target.x, d.group.position.z-d.target.z).toFixed(0)}u`);
+            if (s.hazard === 'fire') addThought(i, 'danger', `FIRE ZONE — 3× drain. High rescue priority.`);
+            addMCP(i, 'call', 'move_to', {drone_id:`drone_${i+1}`, x:d.target.x, z:d.target.z}, {status:'moving', target:s.k});
+            addThought(i, 'action', `Navigating through forest to (${d.target.x.toFixed(0)}, ${d.target.z.toFixed(0)})...`);
+        }
+    });
+};
 
 // Camera
 window.switchCam = function(idx) {
     activeDrone = idx;
-    document.querySelectorAll('.cam-btn').forEach((b,i) => b.classList.toggle('active', i===idx+1));
-    controls.enabled = (idx === -1);
+    document.querySelectorAll('.cam-btn').forEach((b,i) => {
+        const btnIdx = i === 0 ? -1 : i <= 5 ? i-1 : -2;
+        b.classList.toggle('active', btnIdx === idx);
+    });
+    // Reset follow tracking so camera re-centers on new drone
+    drones.forEach(d => d._lastCamPos = null);
+    controls.enabled = true; // always allow orbit
     const thinkBox = document.querySelector('#thinking-box h4');
     const mcpBtn = document.getElementById('mcp-toggle');
     const mcpHtml = ` <span id="mcp-toggle" class="${showMCP?'active':''}" onclick="toggleMCP()">${showMCP?'MCP ON':'MCP OFF'}</span>`;
     thinkBox.innerHTML = (idx >= 0 ? `🧠 ${DRONE_NAMES[idx]} THINKING` : '🧠 CHAIN-OF-THOUGHT (ALL)') + mcpHtml;
+    // Set world view camera
+    if (idx === -2) {
+        cam.position.set(GRID/2, 180, GRID/2);
+        controls.target.set(GRID/2, 0, GRID/2);
+    }
 };
 document.addEventListener('keydown', e => {
     const k = parseInt(e.key);
     if (k===0) switchCam(-1);
     else if (k>=1&&k<=5) switchCam(k-1);
+    else if (k===6) switchCam(-2);
 });
+
+// Manual Drone Kill Function
+window.killDrone = function(idx) {
+    if (drones[idx] && !drones[idx].dead) {
+        drones[idx].battery = 0; // The animation loop will detect this and crash the drone on the next frame
+    }
+};
 
 // Status
 let totalFound = 0;
@@ -651,13 +838,18 @@ function updateStatus() {
     const scannable = Object.values(sectorMeshes).filter(s=>s.hazard!=="no_fly").length;
     h += `<div class="sr"><span class="sl">Coverage</span><span class="sv">${scanned}/${scannable}</span></div>`;
     h += `<div class="sr"><span class="sl">Survivors</span><span class="sv det">${totalFound}/${SURVIVORS.length}</span></div>`;
+    if (missionStarted) {
+        const elapsedSec = (performance.now() - missionStartTime) / 1000;
+        h += `<div class="sr"><span class="sl">Time</span><span class="sv">${formatTime(elapsedSec)}</span></div>`;
+    }
     h += `<div class="sr"><span class="sl">Obstacles</span><span class="sv">${obstacles.length} tracked</span></div>`;
     h += '<hr style="border-color:#222;margin:4px 0">';
     drones.forEach((d,i) => {
         const batClass = d.battery < 25 ? 'low' : d.dead ? 'dead' : '';
         const st = d.dead ? '💀' : d.recharging ? '🔋' : d.state==='scanning' ? '📡' : d.state==='moving' ? '→' : '✅';
         const bp = d.bypassFrames > 0 ? ' ⚡' : '';
-        h += `<div class="sr"><span class="sl" style="color:${DRONE_COLORS[i]}">${st} D${i+1}${bp}</span><span class="sv ${batClass}">${d.battery.toFixed(0)}%</span></div>`;
+        const killBtn = d.dead ? '' : `<button onmousedown="killDrone(${i})" style="margin-left:5px; padding:1px 4px; font-size:9px; font-weight:bold; background:#300; border:1px solid #f00; color:#f55; cursor:pointer; border-radius:3px;" title="Emergency Shutdown">KILL</button>`;
+        h += `<div class="sr"><span class="sl" style="color:${DRONE_COLORS[i]}; display:flex; align-items:center;">${st} D${i+1}${bp}${killBtn}</span><span class="sv ${batClass}">${d.battery.toFixed(0)}%</span></div>`;
     });
     document.getElementById('sc').innerHTML = h;
     document.getElementById('alert-box').classList.toggle('show', totalFound > 0);
@@ -673,12 +865,12 @@ function checkSurvivorsNearDrone(d, droneIdx) {
                 survivorMeshes[si].found = true;
                 survivorMeshes[si].body.material.color.setHex(0x00ff44);
                 survivorMeshes[si].body.material.emissive.setHex(0x00ff44);
-                survivorMeshes[si].light.color.setHex(0x00ff44);
                 scanSpheres[droneIdx].material.color.setHex(0x76ff03);
                 scanSpheres[droneIdx].material.opacity = 0.12;
                 totalFound++;
-                addMCP(droneIdx, 'call', 'thermal_scan', {drone_id:`drone_${droneIdx+1}`, x:s.x, z:s.z}, {survivor_found:true, location:[s.x,s.z], total_found:totalFound});
-                addThought(droneIdx, 'alert', `🔥 SURVIVOR DETECTED at (${s.x}, ${s.z})! Marking for rescue.`);
+                const elapsedSec = (performance.now() - missionStartTime) / 1000;
+                addMCP(droneIdx, 'call', 'thermal_scan', {drone_id:`drone_${droneIdx+1}`, x:s.x, z:s.z}, {survivor_found:true, location:[s.x,s.z], total_found:totalFound, time:formatTime(elapsedSec)});
+                addThought(droneIdx, 'alert', `🔥 SURVIVOR #${totalFound} DETECTED at (${s.x}, ${s.z})! [${formatTime(elapsedSec)}]`);
             }
         }
     });
@@ -730,12 +922,27 @@ function animate() {
             return;
         }
 
+        // Global check for death (battery depleted or manually killed)
+        if (d.battery <= 0) {
+            if (d.target && d.target.sector) {
+                const qs = globalQueue.find(q => q.k === d.target.sector);
+                if (qs) qs.assigned = false; // release sector for other drones
+            }
+            d.battery = 0; d.dead = true; d.state = 'idle'; d.recharging = false;
+            d.group.position.y = 0.5; // crash to ground
+            d.group.children[0].material.color.setHex(0x330000);
+            d.group.children[0].material.emissive.setHex(0x110000);
+            addThought(i, 'danger', `⚠️ BATTERY DEPLETED — drone down at (${d.group.position.x.toFixed(0)}, ${d.group.position.z.toFixed(0)})!`);
+            addMCP(i, 'call', 'report_drone_loss', {drone_id:`drone_${i+1}`, location:[Math.round(d.group.position.x), Math.round(d.group.position.z)]}, {status:'crashed', battery:0});
+            return;
+        }
+
         if (d.recharging) {
             d.battery = Math.min(100, d.battery + dt * 25);
             if (d.battery >= 100) {
                 d.recharging = false;
                 addThought(i, 'action', `Recharged to 100%. Ready for deployment.`);
-                const s = getNextSector();
+                const s = getNextSector(d.group.position);
                 if (s) {
                     d.target = {x:s.c*CELL+CELL/2, z:s.r*CELL+CELL/2, sector:s.k, hazard:s.hazard};
                     d.state = "moving";
@@ -755,43 +962,59 @@ function animate() {
             if (dist > 0.5) {
                 const baseSpd = MOVE_SPEED * (d.target.hazard==="fire"?0.6:1);
                 let dirX = dx/dist, dirZ = dz/dist;
-
-                // Bypass countdown
-                if (d.bypassFrames > 0) {
-                    d.bypassFrames--;
-                    // In bypass mode: fly straight, ignore obstacles
-                } else {
-                    // Normal mode: apply obstacle avoidance
-                    const steer = computeAvoidanceSteer(p, {x:dirX, z:dirZ});
-                    dirX += steer.x * 1.5;
-                    dirZ += steer.z * 1.5;
-
-                    if (steer.blocked && d.avoidCount % 120 === 0) {
-                        addThought(i, 'warning', `Obstacle nearby — adjusting course...`);
-                    }
-                    if (steer.x !== 0 || steer.z !== 0) d.avoidCount++;
-                    else d.avoidCount = 0;
+                if (d.escapeMode === "backtrack") {
+                    // Strong force away from target
+                    dirX = -dx/dist * 2.5; dirZ = -dz/dist * 2.5;
+                } else if (d.escapeMode === "rising" && p.y < 18) {
+                    // If rising but not high enough yet, don't move forward aggressively
+                    dirX *= 0.1; dirZ *= 0.1;
                 }
 
-                // STUCK DETECTION: every 60 frames, check progress
-                if (frameCount - d.stuckCheck.frame > 60) {
+                // Apply obstacle avoidance
+                const steer = computeAvoidanceSteer(p, {x:dirX, z:dirZ});
+                dirX += steer.x;
+                dirZ += steer.z;
+
+                if (steer.blocked && d.avoidCount % 120 === 0) {
+                    addThought(i, 'warning', `Obstacle nearby — adjusting course...`);
+                }
+                if (steer.x !== 0 || steer.z !== 0) d.avoidCount++;
+                else d.avoidCount = 0;
+
+                // STUCK DETECTION: every 40 frames (more sensitive)
+                if (frameCount - d.stuckCheck.frame > 40) {
                     const moved = Math.hypot(p.x - d.stuckCheck.x, p.z - d.stuckCheck.z);
-                    if (moved < 2 && d.state === 'moving') {
-                        // STUCK! Activate bypass mode — fly straight for 60 frames
-                        d.bypassFrames = 60;
-                        addThought(i, 'danger', `STUCK — engaging direct-flight bypass for ${d.bypassFrames} frames...`);
+                    if (moved < 1.0 && d.state === 'moving' && d.escapeMode === "none") {
+                        // STUCK! Try rising first, then backtracking
+                        if (Math.random() > 0.4) {
+                            d.escapeMode = "rising"; d.escapeTimer = 240;
+                            d.targetHeight = 25; // Rise higher than any tree
+                            addThought(i, 'danger', `STUCK — Climbing to 25u to clear canopy.`);
+                        } else {
+                            d.escapeMode = "backtrack"; d.escapeTimer = 120;
+                            addThought(i, 'danger', `STUCK — Rerouting around density...`);
+                        }
                     }
                     d.stuckCheck = {x: p.x, z: p.z, frame: frameCount};
                 }
 
-                // Normalize direction
-                const len = Math.sqrt(dirX*dirX + dirZ*dirZ) || 1;
-                dirX /= len; dirZ /= len;
+                // Escape timer logic
+                if (d.escapeTimer > 0) {
+                    d.escapeTimer--;
+                    if (d.escapeTimer === 0) {
+                        d.escapeMode = "none";
+                        d.targetHeight = d.defaultHeight;
+                        addThought(i, 'action', `Clear of obstacle. Resuming standard flight.`);
+                    }
+                }
 
                 // Move
-                p.x += dirX * baseSpd;
-                p.z += dirZ * baseSpd;
-                p.y = DRONE_FLY_HEIGHT + Math.sin(elapsed*2.5+i)*0.4;
+                const finalLen = Math.sqrt(dirX*dirX + dirZ*dirZ) || 1;
+                p.x += (dirX / finalLen) * baseSpd;
+                p.z += (dirZ / finalLen) * baseSpd;
+                
+                // Smooth altitude change with reduced bobbing
+                p.y += (d.targetHeight - p.y) * 0.04 + Math.sin(elapsed*1.5+i)*0.15;
 
                 const lookTarget = new THREE.Vector3(p.x + dirX*3, p.y, p.z + dirZ*3);
                 d.group.lookAt(lookTarget);
@@ -800,28 +1023,19 @@ function animate() {
                 const mult = d.target.hazard==="fire"?3:d.target.hazard==="smoke"?1.5:1;
                 d.battery -= baseSpd * DRAIN_PER_UNIT * mult;
 
-                // Check for death — battery depleted in field
-                if (d.battery <= 0) {
-                    d.battery = 0; d.dead = true; d.state = 'idle';
-                    d.group.position.y = 0.5; // crash to ground
-                    d.group.children[0].material.color.setHex(0x330000);
-                    d.group.children[0].material.emissive.setHex(0x110000);
-                    addThought(i, 'danger', `⚠️ BATTERY DEPLETED — drone down at (${d.group.position.x.toFixed(0)}, ${d.group.position.z.toFixed(0)})!`);
-                    addMCP(i, 'call', 'report_drone_loss', {drone_id:`drone_${i+1}`, location:[Math.round(d.group.position.x), Math.round(d.group.position.z)]}, {status:'crashed', battery:0});
-                    return;
-                }
-
                 // Smart RTB: estimate battery needed to return (same formula + 40% path overhead + margin)
                 const distToBase = Math.hypot(d.group.position.x - BASE.x, d.group.position.z - BASE.z);
                 const batteryToReturn = distToBase * DRAIN_PER_UNIT * 1.4 + 8;
                 if (d.battery < batteryToReturn && d.target.sector) {
+                    const qs = globalQueue.find(q => q.k === d.target.sector);
+                    if (qs) qs.assigned = false; // release sector for other drones
                     addThought(i, 'danger', `Battery ${d.battery.toFixed(0)}% — est. ${batteryToReturn.toFixed(0)}% needed to RTB. Returning NOW!`);
                     d.target = {x:BASE.x, z:BASE.z, sector:null, hazard:"clear"};
                     d.state = "moving";
                     addMCP(i, 'call', 'recall_for_charging', {drone_id:`drone_${i+1}`, battery:Math.round(d.battery), est_rtb_cost:Math.round(batteryToReturn)}, {status:'returning', target:'base'});
                 }
 
-                checkSurvivorsNearDrone(d, i);
+                // checkSurvivorsNearDrone(d, i); // DISABLED during movement: must stop to scan intentionaly
             } else {
                 if (d.target.sector) {
                     d.state = "scanning"; d.scanTimer = 0;
@@ -876,7 +1090,7 @@ function animate() {
                     d.state = "moving";
                     addMCP(i, 'call', 'recall_for_charging', {drone_id:`drone_${i+1}`, battery:Math.round(d.battery)}, {status:'returning', target:'base'});
                 } else {
-                    const s = getNextSector();
+                    const s = getNextSector(d.group.position);
                     if (s) {
                         d.target = {x:s.c*CELL+CELL/2, z:s.r*CELL+CELL/2, sector:s.k, hazard:s.hazard};
                         d.state = "moving";
@@ -887,7 +1101,22 @@ function animate() {
                         addThought(i, 'action', `Navigating to (${d.target.x.toFixed(0)}, ${d.target.z.toFixed(0)})...`);
                     } else {
                         d.state = "idle";
-                        addThought(i, 'alert', `All sectors covered. Mission complete! 🎯`);
+                        // Check if ALL sectors are done
+                        const scanned = Object.values(sectorMeshes).filter(s=>s.scanned).length;
+                        const scannable = Object.values(sectorMeshes).filter(s=>s.hazard!=="no_fly").length;
+                        if (scanned === scannable && !missionComplete) {
+                            missionComplete = true;
+                            const totalTime = formatTime((performance.now() - missionStartTime) / 1000);
+                            addThought(i, 'alert', `🎯 ALL SECTORS COVERED! MISSION SUCCESS! [Total Time: ${totalTime}]`);
+                            addMCP(i, 'call', 'finalize_mission', {completion_time:totalTime}, {status:'mission_complete'});
+                            
+                            // Show Popup
+                            document.getElementById('final-time').textContent = totalTime;
+                            document.getElementById('final-found').textContent = `${totalFound}/${SURVIVORS.length}`;
+                            document.getElementById('success-modal').style.display = 'flex';
+                        } else {
+                            addThought(i, 'reason', `Awaiting other drones... All assigned sectors covered.`);
+                        }
                     }
                 }
             }
@@ -898,12 +1127,20 @@ function animate() {
     });
 
     // Camera
+    // Camera follow
     if (activeDrone >= 0 && activeDrone < drones.length) {
         const dp = drones[activeDrone].group.position;
-        const off = new THREE.Vector3(-6, 8, -6);
-        cam.position.lerp(new THREE.Vector3(dp.x+off.x, dp.y+off.y, dp.z+off.z), 0.06);
-        cam.lookAt(dp);
-        controls.target.set(dp.x, dp.y, dp.z);
+        // Move camera + target by how much the drone moved this frame
+        if (!drones[activeDrone]._lastCamPos) {
+            drones[activeDrone]._lastCamPos = dp.clone();
+            // Initial position: behind and above the drone
+            cam.position.set(dp.x, dp.y + 12, dp.z - 18);
+            controls.target.set(dp.x, dp.y, dp.z);
+        }
+        const delta = dp.clone().sub(drones[activeDrone]._lastCamPos);
+        cam.position.add(delta);
+        controls.target.add(delta);
+        drones[activeDrone]._lastCamPos.copy(dp);
     }
 
     controls.update();
