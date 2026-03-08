@@ -1,4 +1,8 @@
 import os
+import sys
+
+# Ensure project root is in PYTHONPATH for cloud deployment
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from mcp.server.fastmcp import FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
 from simulation.simulation_engine import SimulationEngine

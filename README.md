@@ -197,7 +197,7 @@ To host your MCP server on the managed **Prefect Horizon** platform:
 1.  **Push to GitHub**: Ensure your latest code (including `requirements.txt` and `mcp_app/mcp_server.py`) is pushed to a GitHub repository.
 2.  **Sign in to Horizon**: Go to [horizon.prefect.io](https://horizon.prefect.io) and sign in with GitHub.
 3.  **Connect Repo**: Select your `vhack-cs3` repository.
-4.  **Configure**: Point Horizon to `mcp_app/mcp_server.py:mcp` for the FastMCP instance.
+4.  **Configure**: Point Horizon to `horizon_server.py:mcp` for the FastMCP instance.
 5.  **Deploy**: Click **Deploy**. Horizon will automatically:
     - Build a container for your server.
     - Install all dependencies from `requirements.txt`.
