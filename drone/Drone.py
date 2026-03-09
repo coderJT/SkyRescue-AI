@@ -56,7 +56,7 @@ class Drone:
         """
         old_x, old_y, old_z = self.coordinates
         distance = math.sqrt((x - old_x)**2 + (y - old_y)**2 + (z - old_z)**2)
-        self.drain_battery(distance * 0.02)  # 0.02% per unit distance
+        self.drain_battery(distance * 0.05)  # 0.05% per unit distance
         self.coordinates = (x, y, z)
 
     def drain_battery(self, amount):

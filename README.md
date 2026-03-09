@@ -130,14 +130,13 @@ vhack-cs3/
 │   ├── simulation.html            # 🖥️  Main 3D simulation (Three.js renderer)
 │   └── simulation_engine.py       # ⚙️  Core physics & mission logic
 ├── agent/
-│   ├── commander_agent.py         # 🤖 Autonomous LLM Swarm Commander (Main Brain)
-│   └── mcp_client.py              # 🔌 MCP protocol interface
+│   └── commander_agent.py         # 🤖 Autonomous LLM Swarm Commander
 ├── mcp_app/
-│   └── mcp_server.py              # 📡 FastMCP Server (Host of 15 tools)
+│   └── mcp_server.py              # 📡 Unified FastMCP Server
 ├── drone/
 │   └── Drone.py                   # 🚁 Drone flight & battery model
-├── start.py                       # 🚀 Lifecycle script (Server + Browser)
-└── run_server.py                  # 📡 Low-level server entry point
+├── start.py                       # 🚀 Lifecycle script (Server + UI)
+└── README.md                      # 📖 This file
 ```
 
 ---
