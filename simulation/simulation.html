@@ -1539,21 +1539,35 @@ function processBatchQueue() {
                 const dist = Math.hypot(center[0] - id.pos[0], center[1] - id.pos[2]);
                 if (dist < minDist) minDist = dist;
             });
+            // Weight for sorting (LLM prefers lowest)
+            let weight = minDist;
+            if (sm.hazard === 'fire') weight *= 0.01;
+            else if (sm.hazard === 'smoke') weight *= 0.3;
+            
             unscannedSectors[sm.k] = {
                 center: center,
                 distance: parseFloat(minDist.toFixed(1)),
                 time_left: parseFloat(timeLeft.toFixed(1)),
-                hazard: sm.hazard.toUpperCase()
+                hazard: sm.hazard.toUpperCase(),
+                weight: weight
             };
             hazardMap[sm.k] = { hazard: sm.hazard };
         }
     });
+
+    // Convert to array, sort by weight, then map back to object to enforce JSON key ordering
+    let sortedEntries = Object.entries(unscannedSectors).sort((a,b) => a[1].weight - b[1].weight);
+    let finalUnscannedSectors = {};
+    for (let [k, v] of sortedEntries) {
+        delete v.weight; // clean payload
+        finalUnscannedSectors[k] = v;
+    }
     
     // Copy the queue and clear it (drones will be re-queued if assignment fails)
     const batchIndices = [...assignmentQueue];
     assignmentQueue.length = 0;
     
-    if (Object.keys(unscannedSectors).length === 0) {
+    if (Object.keys(finalUnscannedSectors).length === 0) {
         // No sectors left — recall all
         batchIndices.forEach(idx => {
             const d = drones[idx];
@@ -1567,7 +1581,7 @@ function processBatchQueue() {
     mcpClient.callTool('get_batch_decision', {
         idle_drones: idleDrones,
         active_drones: activeDrones,
-        unscanned_sectors: unscannedSectors,
+        unscanned_sectors: finalUnscannedSectors,
         hazard_map: hazardMap
     })
     .then(data => {

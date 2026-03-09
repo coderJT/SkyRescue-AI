@@ -19,23 +19,24 @@ engine = SimulationEngine()
 api_key = os.environ.get("MISTRAL_API_KEY")
 llm = None
 if api_key:
-    llm = ChatMistralAI(model="mistral-large-latest", mistral_api_key=api_key)
+    llm = ChatMistralAI(model="mistral-small-latest", mistral_api_key=api_key)
 
 
 @mcp.tool()
-async def get_high_level_decision(drone_id: str, battery: float, current_pos: list[float], other_drones: list[dict]) -> dict:
+async def get_high_level_decision(drone_id: str, battery: float, current_pos: list[float], other_drones: list[dict]) -> str:
     """
     Use the high-level Mistral LLM brain to decide the next move for a drone.
     This tool combines tactical recommendations with strategic swarm coordination.
     """
+    import json
     if not llm:
-        return {"error": "MISTRAL_API_KEY not set on MCP server. LLM Brain unavailable."}
+        return json.dumps({"error": "MISTRAL_API_KEY not set on MCP server. LLM Brain unavailable."})
 
     # Fetch top tactical candidates from the SAME engine instance
     recommendations = engine.get_tactical_recommendations(drone_id, battery, current_pos, other_drones)
 
     if not recommendations:
-        return {"decision": "__RECALL__", "reasoning": "No scannable sectors available within safe reach."}
+        return json.dumps({"decision": "__RECALL__", "reasoning": "No scannable sectors available within safe reach."})
 
     # Build prompt context
     prompt = f"""
@@ -58,26 +59,26 @@ Your tactical specialist (the simulation engine) has curated these candidates:
         prompt += f"- {r['id']}: {r['hazard'].upper()} | Time Remaining: {r['time_left_seconds']}s | Distance: {r['distance']} units\n"
 
     prompt += """
-COMMANDERS GOAL:
-1. Review the recommendations. 
-2. Choose the BEST sector from the list.
+COMMANDERS GOAL AND STRICT RULES:
+1. Review the recommendations provided above. 
+2. Choose the BEST sector from the EXACT list of Candidate IDs provided. DO NOT invent sectors.
 3. DEADLINE PRIORITY: Prioritize sectors with the LOWEST 'Time Remaining' (Fire: 60s, Smoke: 180s).
 4. STRATEGIC SEPARATION: Do NOT pick a sector if another drone is already targeting it.
+5. BATTERY AWARENESS: Drones drain battery by distance. Fire zones cost 3x battery per unit, smoke costs 1.5x. If a priority sector is too far for the current battery safely, pick a closer safe sector.
 
 REQUIRED JSON FORMAT:
 {
     "decision": "SectorID",
-    "reasoning": "Explain your choice (e.g., 'Choosing S3_2: critical fire area with only 15s remaining')."
+    "reasoning": "Explain your choice concisely regarding time limits, teammates, and battery."
 }
 """
 
     try:
         response = await llm.ainvoke([
-            SystemMessage(content="You are a high-level rescue commander AI. You output ONLY valid JSON."),
+            SystemMessage(content="You are a brilliant SAR commander. You output valid JSON with no conversational text."),
             HumanMessage(content=prompt)
         ])
         
-        import json
         content = response.content.strip()
         if content.startswith("```json"): content = content[7:-3]
         elif content.startswith("```"): content = content[3:-3]
@@ -86,26 +87,27 @@ REQUIRED JSON FORMAT:
         # Final validation against scannable list
         if result.get("decision") not in [r["id"] for r in recommendations] and result.get("decision") != "__RECALL__":
              result["decision"] = recommendations[0]["id"]
-             result["reasoning"] = "(Tactical Override) " + result.get("reasoning", "")
+             result["reasoning"] = "(Tactical Override: Invalid Sector) " + result.get("reasoning", "")
              
-        return result
+        return json.dumps(result)
     except Exception as e:
-        return {"decision": recommendations[0]["id"], "reasoning": f"Tactical fallback: {str(e)}"}
+        return json.dumps({"decision": recommendations[0]["id"], "reasoning": f"Tactical fallback: {str(e)}"})
 
 @mcp.tool()
-async def get_batch_decision(idle_drones: list[dict], active_drones: list[dict], unscanned_sectors: dict, hazard_map: dict) -> dict:
+async def get_batch_decision(idle_drones: list[dict], active_drones: list[dict], unscanned_sectors: dict, hazard_map: dict) -> str:
     """
     Use the high-level Mistral LLM brain to coordinate batch assignments for multiple idle drones.
     """
+    import json
     if not llm:
-        return {"error": "MISTRAL_API_KEY not set on server"}
+        return json.dumps({"error": "MISTRAL_API_KEY not set on server"})
 
     if not unscanned_sectors:
-        return {"assignments": {d["id"]: "__RECALL__" for d in idle_drones}, "reasoning": "No scannable sectors remain."}
+        return json.dumps({"assignments": {d["id"]: "__RECALL__" for d in idle_drones}, "reasoning": "No scannable sectors remain."})
 
     # Build multi-drone coordination prompt
     prompt = f"""
-You are the GLOBAL SWARM COMMANDER for a critical Search & Rescue mission.
+You are the GLOBAL SWARM COMMANDER for a critical SAR mission.
 You must assign targets to {len(idle_drones)} IDLE drones simultaneously.
 
 IDLE DRONES (Waiting for Orders):
@@ -116,21 +118,23 @@ IDLE DRONES (Waiting for Orders):
     prompt += "\nACTIVE TEAMMATES (Already busy):\n"
     for d in active_drones:
         ts = d.get('target_sector') or 'None'
-        prompt += f"- {d['id']}: Position {d['pos']} | Target: {ts}\n"
+        prompt += f"- {d['id']}: Target: {ts}\n"
 
     prompt += """
 TACTICAL CANDIDATES:
 DANGER: Survivors in FIRE die in 60s, SMOKE in 180s, others in 600s.
 """
     for sid, s in unscanned_sectors.items():
-        prompt += f"- {sid}: {s['hazard']} | Time Remaining: {s['time_left']}s | Distance: {s['distance']} units\n"
+        prompt += f"- {sid}: {s['hazard']} | Time Remaining: {s['time_left']}s | Distance (from closest drone): {s['distance']} units\n"
 
     prompt += """
-COMMANDERS COORDINATION GOAL:
-1. Assign EXACTLY ONE unique sector to each IDLE drone.
-2. GLOBAL OPTIMIZATION: Ensure the CLOSEST drone is assigned to the most critical (low time) fire areas.
-3. CONFLICT AVOIDANCE: Do NOT assign a sector that is already being targeted by an ACTIVE teammate.
-4. RECALL: If a drone has low battery or no good targets remain, assign "__RECALL__".
+COMMANDERS COORDINATION GOAL AND STRICT RULES:
+1. Assign EXACTLY ONE unique sector to EACH IDLE drone.
+2. USE ONLY the sector IDs provided in the TACTICAL CANDIDATES list. DO NOT hallucinate sectors.
+3. GLOBAL OPTIMIZATION: Ensure the CLOSEST drone is assigned to the most critical (low time) fire areas.
+4. CONFLICT AVOIDANCE: Do NOT assign a sector that is already being targeted by an ACTIVE teammate.
+5. BATTERY AWARENESS: Estimate if a drone has enough battery. Fire zones use 3x battery per unit distance.
+6. RECALL: If a drone has low battery (<25%) or no good targets remain, assign "__RECALL__".
 
 REQUIRED JSON FORMAT:
 {
@@ -138,7 +142,7 @@ REQUIRED JSON FORMAT:
         "drone_1": "S2_3",
         "drone_3": "__RECALL__"
     },
-    "reasoning": "Coordinated batch assignment: drone_1 sent to nearby fire front (S2_3), drone_3 recalled for charging."
+    "reasoning": "Drone_1 sent to critical fire front S2_3; drone_3 recalled due to 20% battery."
 }
 """
 
@@ -161,7 +165,7 @@ REQUIRED JSON FORMAT:
             if d['id'] not in result.get("assignments", {}):
                 result.setdefault("assignments", {})[d['id']] = "__RECALL__"
                 
-        return result
+        return json.dumps(result)
     except Exception as e:
         print(f"Error calling LLM for batch: {e}")
         # Emergency fallback: Assign first available sector to first drone, others recall
@@ -169,7 +173,7 @@ REQUIRED JSON FORMAT:
         sids = list(unscanned_sectors.keys())
         for i, d in enumerate(idle_drones):
             fallback["assignments"][d['id']] = sids[i] if i < len(sids) else "__RECALL__"
-        return fallback
+        return json.dumps(fallback)
 
 
 @mcp.tool()
