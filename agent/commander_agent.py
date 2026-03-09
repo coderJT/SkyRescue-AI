@@ -15,6 +15,10 @@ if not MISTRAL_API_KEY:
 
 llm = ChatMistralAI(model="mistral-small-latest", mistral_api_key=MISTRAL_API_KEY)
 
+def get_dist(p1, p2):
+    """Euclidean distance for (x, z) coordinates."""
+    return ((p1[0]-p2[0])**2 + (p1[1]-p2[1])**2)**0.5
+
 async def call_tool(session, tool_name, args=None):
     """Helper to call MCP tools and parse the JSON string response."""
     try:
