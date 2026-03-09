@@ -1495,7 +1495,9 @@ function processBatchQueue() {
     if (assignmentQueue.length === 0 || !useLLM || missionComplete || isBatchThinking) return;
     
     const now = performance.now();
-    if (now - lastBatchTime < 1000) return;  // Throttle: max once per second
+    // Heavy throttle to prevent 429 errors from LLM. Wait up to 4s if only 1 drone is ready, to encourage batching.
+    const throttleLimit = assignmentQueue.length > 1 ? 2500 : 4000;
+    if (now - lastBatchTime < throttleLimit) return;  
     lastBatchTime = now;
     isBatchThinking = true;
     
