@@ -24,6 +24,7 @@ class SimulationEngine:
         self._initialized = True
         import time
         self.start_time = time.time()
+        self.mission_log = []
 
         # --- Drones (start at base camp in bottom-left) ---
         self.drones = {
@@ -42,119 +43,51 @@ class SimulationEngine:
         self.sector_height = self.grid_size / self.sector_rows
         self.sectors = {}
         
-        # We need fire and no-fly sets defined before figuring out hazard per sector
-        # --- Environment: No-Fly Zones (impassable obstacles) ---
-        # Each zone: {"name", "sectors": [list of sector IDs], "reason"}
+        # --- Environment: No-Fly Zones (fixed landmarks) ---
         self.no_fly_zones = []
         self.no_fly_sector_ids = set()
-        for zone in self.no_fly_zones:
-            for macro_sid in zone["sectors"]:
-                r, c = int(macro_sid[1]), int(macro_sid[3])
-                for dr in (0, 1):
-                    for dc in (0, 1):
-                        self.no_fly_sector_ids.add(f"S{r*2+dr}_{c*2+dc}")
-
-        # --- Environment: Fire Zones (hazardous, high battery drain) ---
-        self.fire_zones = [
-            {
-                "name": "Northern Fire Front",
-                "sectors": ["S3_2", "S4_2"],
-                "intensity": "high",
-                "battery_multiplier": 3.0,
-            },
-            {
-                "name": "Eastern Blaze",
-                "sectors": ["S2_3", "S3_3"],
-                "intensity": "medium",
-                "battery_multiplier": 2.5,
-            },
-        ]
-        self.fire_sector_ids = set()
+        
+        # --- Dynamic Environment State ---
+        self.fire_sector_ids = set() # True fire
+        self.smoke_sector_ids = set() # True smoke
         self.fire_multipliers = {}
-        for zone in self.fire_zones:
-            for macro_sid in zone["sectors"]:
-                r, c = int(macro_sid[1]), int(macro_sid[3])
-                for dr in (0, 1):
-                    for dc in (0, 1):
-                        sid = f"S{r*2+dr}_{c*2+dc}"
-                        self.fire_sector_ids.add(sid)
-                        self.fire_multipliers[sid] = zone["battery_multiplier"]
-
-        # --- Environment: Smoke Zones ---
-        self.smoke_sector_ids = set()
-        for sid in list(self.fire_sector_ids):
-            # Format is like "S3_4". split at "_"
-            parts = sid[1:].split("_")
-            row, col = int(parts[0]), int(parts[1])
-            for dr, dc in [(-1,0),(1,0),(0,-1),(0,1)]:
-                nr, nc = row + dr, col + dc
-                if 0 <= nr < self.sector_rows and 0 <= nc < self.sector_cols:
-                    adj_id = f"S{nr}_{nc}"
-                    if adj_id not in self.fire_sector_ids and adj_id not in self.no_fly_sector_ids:
-                        self.smoke_sector_ids.add(adj_id)
-
+        self.discovered_sector_ids = set() # Shared swarm knowledge
+        
+        # Initialize sectors
         for row in range(self.sector_rows):
             for col in range(self.sector_cols):
                 sector_id = f"S{row}_{col}"
                 cx = col * self.sector_width + self.sector_width / 2
                 cy = row * self.sector_height + self.sector_height / 2
-
-                # Determine hazard type
-                if sector_id in self.no_fly_sector_ids:
-                    hazard = "no_fly"
-                elif sector_id in self.fire_sector_ids:
-                    hazard = "fire"
-                elif sector_id in self.smoke_sector_ids:
-                    hazard = "smoke"
-                else:
-                    hazard = "clear"
-
+                
                 self.sectors[sector_id] = {
                     "id": sector_id,
                     "row": row,
                     "col": col,
                     "center": (cx, cy),
-                    "hazard": hazard,
+                    "true_hazard": "clear", # The ground truth
+                    "hazard": "clear",      # What the drones have discovered
+                    "discovered": False,
                     "scanned": False,
                     "assigned_to": None,
-                    "status": "unscanned", # unscanned, assigned, scanned
+                    "status": "unscanned",
                     "survivors_found": [],
                 }
 
-        # Survivors: (x, y, z, survival_limit_seconds)
-        self.survivors = []
-        raw_survivors = [
-            (25, 35, 0), (50, 50, 0), (65, 55, 0), 
-            (15, 75, 0), (80, 65, 0), (35, 85, 0), (72, 12, 0)
-        ]
-        for x, y, z in raw_survivors:
-            # Note: in this tuple, the 2nd value was intended as 'z' (horizontal), mapping to y in 2D space. But let's just use z properly if tuple is (x, y, z). Wait, the hardcoded data is (25, 35, 0), so let's treat the middle value as z.
-            # actually let's unpack as x, z, y
-            pass
-        for x, z, y in raw_survivors:
-            sid = self._get_sector_at(x, z)
-            limit = 600 # default 10 mins
-            if sid in self.fire_sector_ids: limit = 60
-            elif sid in self.smoke_sector_ids: limit = 180
-            self.survivors.append({"pos": (x, y, z), "limit": limit, "expired": False})
+        # Generate Random Fire (Remove Northern/Eastern hardcoding)
+        self._generate_random_hazards()
+        
+        # survivors randomized separately
+        self._generate_random_survivors()
 
         # --- Discovered survivors (found during scans) ---
         self.discovered_survivors = []
 
         
 
-        # --- Environment: Smoke Zones (adjacent to fire, moderate penalty) ---
-        self.smoke_sector_ids = set()
         self.smoke_multiplier = 1.5
-        # Auto-calculate smoke zones: any sector adjacent to a fire sector
-        for sid in list(self.fire_sector_ids):
-            row, col = int(sid[1]), int(sid[3])
-            for dr, dc in [(-1,0),(1,0),(0,-1),(0,1)]:
-                nr, nc = row + dr, col + dc
-                if 0 <= nr < self.sector_rows and 0 <= nc < self.sector_cols:
-                    adj_id = f"S{nr}_{nc}"
-                    if adj_id not in self.fire_sector_ids and adj_id not in self.no_fly_sector_ids:
-                        self.smoke_sector_ids.add(adj_id)
+        # Discover initial base area (larger 5-tile radius)
+        self._update_discovery(5, 5, radius=5)
 
         # --- Environment: Wind ---
         self.wind = {
@@ -168,11 +101,104 @@ class SimulationEngine:
         for sid in self.no_fly_sector_ids:
             self.sectors[sid]["scanned"] = True
 
-        # --- Mission Log ---
-        self.mission_log = []
 
     def log(self, message):
+        print(f"📡 {message}")
         self.mission_log.append(message)
+
+    def _generate_random_hazards(self):
+        """Randomly seed fire and calculate smoke spreading."""
+        import random
+        # 1. Clear previous truth AND discovery
+        self.fire_sector_ids = set()
+        self.smoke_sector_ids = set()
+        self.fire_multipliers = {}
+        self.discovered_sector_ids = set()
+        for sid in self.sectors:
+            self.sectors[sid]["true_hazard"] = "clear"
+            self.sectors[sid]["hazard"] = "clear"
+            self.sectors[sid]["discovered"] = False
+            self.sectors[sid]["scanned"] = False
+            self.sectors[sid]["assigned_to"] = None
+            self.sectors[sid]["survivors_found"] = []
+        
+        # 2. Pick 5-7 Fire Seeds (spread across the map)
+        # Exclude base camp area (0,0) to (2,2)
+        valid_seeds = []
+        for r in range(0, self.sector_rows):
+            for c in range(0, self.sector_cols):
+                if r <= 2 and c <= 2: continue # Base camp safety
+                valid_seeds.append((r, c))
+        
+        num_seeds = random.randint(8, 12)
+        seeds = random.sample(valid_seeds, min(num_seeds, len(valid_seeds)))
+        
+        for r, c in seeds:
+            # Each seed creates a cluster (1x2 to 3x3)
+            patch_size_r = random.randint(1, 3)
+            patch_size_c = random.randint(1, 3)
+            for dr in range(patch_size_r):
+                for dc in range(patch_size_c):
+                    nr, nc = r + dr, c + dc
+                    if 0 <= nr < self.sector_rows and 0 <= nc < self.sector_cols:
+                        sid = f"S{nr}_{nc}"
+                        if sid not in self.no_fly_sector_ids:
+                            self.fire_sector_ids.add(sid)
+                            self.fire_multipliers[sid] = 3.0
+                            self.sectors[sid]["true_hazard"] = "fire"
+
+        # 3. Calculate Smoke (adjacent to fire)
+        for sid in list(self.fire_sector_ids):
+            parts = sid[1:].split("_")
+            row, col = int(parts[0]), int(parts[1])
+            
+            for dr, dc in [(-1,0),(1,0),(0,-1),(0,1)]:
+                nr, nc = row + dr, col + dc
+                if 0 <= nr < self.sector_rows and 0 <= nc < self.sector_cols:
+                    adj_id = f"S{nr}_{nc}"
+                    if adj_id not in self.fire_sector_ids and adj_id not in self.no_fly_sector_ids:
+                        self.smoke_sector_ids.add(adj_id)
+                        self.sectors[adj_id]["true_hazard"] = "smoke"
+
+    def _generate_random_survivors(self):
+        """Randomly spawn survivors avoiding base camp."""
+        import random
+        self.survivors = []
+        num_survivors = random.randint(7, 12)
+        for _ in range(num_survivors):
+            # Try to pick a spot not in base camp (0,0) to (40,40)
+            for _attempt in range(10):
+                x = random.uniform(10, 190)
+                z = random.uniform(10, 190)
+                if not (x < 40 and z < 40):
+                    break
+            
+            true_hazard = self._get_true_hazard_at(x, z)
+            limit = 600
+            if true_hazard == "fire": limit = 60
+            elif true_hazard == "smoke": limit = 180
+            self.survivors.append({"pos": (round(x,1), 0, round(z,1)), "limit": limit, "expired": False})
+
+    def _update_discovery(self, x, z, radius=3):
+        """Reveal true_hazard for sectors within `radius` tiles of (x, z)."""
+        center_sid = self._get_sector_at(x, z)
+        parts = center_sid[1:].split("_")
+        row, col = int(parts[0]), int(parts[1])
+        for dr in range(-radius, radius + 1):
+            for dc in range(-radius, radius + 1):
+                nr, nc = row + dr, col + dc
+                if 0 <= nr < self.sector_rows and 0 <= nc < self.sector_cols:
+                    sid = f"S{nr}_{nc}"
+                    sector = self.sectors[sid]
+                    if not sector["discovered"]:
+                        sector["discovered"] = True
+                        sector["hazard"] = sector["true_hazard"]
+                        if sector["hazard"] != "clear":
+                            self.log(f"DISCOVERY: Swarm detected {sector['hazard'].upper()} at {sid}")
+
+    def _get_true_hazard_at(self, x, z):
+        sid = self._get_sector_at(x, z)
+        return self.sectors[sid]["true_hazard"]
 
     def reset_mission(self):
         """Reset mission timer, survivors, and sector states for a new run."""
@@ -192,7 +218,10 @@ class SimulationEngine:
             sector["assigned_to"] = None
             sector["survivors_found"] = []
                 
-        self.log("Mission Reset: Grid cleared and timers restarted.")
+        self.log("Mission Reset: Hazards and survivors re-randomized.")
+        self._generate_random_hazards()
+        self._generate_random_survivors()
+        self._update_discovery(5, 5, radius=5) # Discover base
         return {"status": "success", "message": "Mission state fully reset."}
 
     def _get_sector_at(self, x, z):
@@ -202,7 +231,7 @@ class SimulationEngine:
         return f"S{row}_{col}"
 
     def _battery_multiplier_at(self, x, z):
-        """Return the battery drain multiplier at a given position."""
+        """Return the battery drain multiplier at a given position based on TRUE hazard."""
         sid = self._get_sector_at(x, z)
         if sid in self.fire_multipliers:
             return self.fire_multipliers[sid]
@@ -294,6 +323,9 @@ class SimulationEngine:
         # Apply extra drain for hazardous zones
         old_coords = drone.coordinates
         drone.move_to(x, y, z)
+        
+        # Trigger dynamic hazard discovery
+        self._update_discovery(x, z)
 
         if multiplier > 1.0:
             # Extra drain on top of movement drain already applied
@@ -367,14 +399,25 @@ class SimulationEngine:
     # ─── Environment ───
 
     def get_environment(self):
-        """Return full environmental hazard data."""
+        """Return discovered environmental hazard data."""
+        discovered_fire = []
+        # Group discovered fire sectors into "Known Zones" for the agent
+        # (This keeps the MCP tool output familiar but dynamic)
+        discovered_fire_ids = [sid for sid, s in self.sectors.items() if s["discovered"] and s["hazard"] == "fire"]
+        if discovered_fire_ids:
+            discovered_fire.append({
+                "name": "Discovered Fire Front",
+                "sectors": discovered_fire_ids,
+                "intensity": "high",
+                "battery_multiplier": 3.0
+            })
+
         return {
-            "no_fly_zones": self.no_fly_zones,
-            "fire_zones": self.fire_zones,
-            "smoke_sectors": sorted(list(self.smoke_sector_ids)),
+            "discovered_fire_zones": discovered_fire,
+            "smoke_sectors": sorted([sid for sid, s in self.sectors.items() if s["discovered"] and s["hazard"] == "smoke"]),
             "wind": self.wind,
             "grid_size": self.grid_size,
-            "sector_layout": "5x5 grid, 20x20 units each",
+            "sector_layout": "10x10 grid, 20x20 units each",
         }
 
     def get_hazard_map(self):
@@ -425,6 +468,9 @@ class SimulationEngine:
         scan_result = self.thermal_scan(drone_id)
         if "error" in scan_result:
             return scan_result
+
+        # Discovery also happens on scan
+        self._update_discovery(cx, cy)
 
         sector["scanned"] = True
         sector["assigned_to"] = drone_id

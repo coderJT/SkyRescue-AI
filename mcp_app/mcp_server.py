@@ -64,6 +64,10 @@ def update_drone_state(drone_id: str, battery: float, x: float, y: float, z: flo
         drone.battery_remaining = battery
         drone.coordinates = (x, y, z)
         drone.status = status
+        
+        # Trigger dynamic discovery as the drone moves
+        engine._update_discovery(x, z)
+        
         return {"status": "success"}
     except Exception as e:
         import traceback
@@ -115,38 +119,38 @@ async def get_high_level_decision(drone_id: str, battery: float, current_pos: li
 
     # Build prompt context
     prompt = f"""
-You are the high-level swarm commander for {drone_id} in a critical SAR mission.
-Current Battery: {battery:.1f}%
-Current Position [x, y, z]: {current_pos}
-Base Station: [5, 0, 5]
+        You are the high-level swarm commander for {drone_id} in a critical SAR mission.
+        Current Battery: {battery:.1f}%
+        Current Position [x, y, z]: {current_pos}
+        Base Station: [5, 0, 5]
 
-SWARM CONTEXT (Teammates):
-"""
+        SWARM CONTEXT (Teammates):
+    """
     for d in other_drones:
         ts = d.get('target_sector') or 'None'
         prompt += f"- {d['id']}: Position {d['pos']} | State: {d['state']} | Target: {ts}\n"
 
     prompt += """
-TACTICAL RECOMMENDATIONS (Sorted by Urgency & Proximity):
-Your tactical specialist (the simulation engine) has curated these candidates:
-"""
+    TACTICAL RECOMMENDATIONS (Sorted by Urgency & Proximity):
+    Your tactical specialist (the simulation engine) has curated these candidates:
+    """
     for r in recommendations:
         prompt += f"- {r['id']}: {r['hazard'].upper()} | Time Remaining: {r['time_left_seconds']}s | Distance: {r['distance']} units\n"
 
     prompt += """
-COMMANDERS GOAL AND STRICT RULES:
-1. Review the recommendations provided above. 
-2. Choose the BEST sector from the EXACT list of Candidate IDs provided. DO NOT invent sectors.
-3. DEADLINE PRIORITY: Prioritize sectors with the LOWEST 'Time Remaining' (Fire: 60s, Smoke: 180s).
-4. STRATEGIC SEPARATION: Do NOT pick a sector if another drone is already targeting it.
-5. BATTERY AWARENESS: Drones drain battery by distance. Fire zones cost 3x battery per unit, smoke costs 1.5x. If a priority sector is too far for the current battery safely, pick a closer safe sector.
+    COMMANDERS GOAL AND STRICT RULES:
+    1. Review the recommendations provided above. 
+    2. Choose the BEST sector from the EXACT list of Candidate IDs provided. DO NOT invent sectors.
+    3. DEADLINE PRIORITY: Prioritize sectors with the LOWEST 'Time Remaining' (Fire: 60s, Smoke: 180s).
+    4. STRATEGIC SEPARATION: Do NOT pick a sector if another drone is already targeting it.
+    5. BATTERY AWARENESS: Drones drain battery by distance. Fire zones cost 3x battery per unit, smoke costs 1.5x. If a priority sector is too far for the current battery safely, pick a closer safe sector.
 
-REQUIRED JSON FORMAT:
-{
-    "decision": "SectorID",
-    "reasoning": "Explain your choice concisely regarding time limits, teammates, and battery."
-}
-"""
+    REQUIRED JSON FORMAT:
+    {
+        "decision": "SectorID",
+        "reasoning": "Explain your choice concisely regarding time limits, teammates, and battery."
+    }
+    """
 
     try:
         response = await llm.ainvoke([
@@ -182,11 +186,11 @@ async def get_batch_decision(idle_drones: list[dict], active_drones: list[dict],
 
     # Build multi-drone coordination prompt
     prompt = f"""
-You are the GLOBAL SWARM COMMANDER for a critical SAR mission.
-You must assign targets to {len(idle_drones)} IDLE drones simultaneously.
+    You are the GLOBAL SWARM COMMANDER for a critical SAR mission.
+    You must assign targets to {len(idle_drones)} IDLE drones simultaneously.
 
-IDLE DRONES (Waiting for Orders):
-"""
+    IDLE DRONES (Waiting for Orders):
+    """
     for d in idle_drones:
         prompt += f"- {d['id']}: Battery {d['battery']:.1f}% | Position {d['pos']}\n"
 
@@ -196,30 +200,30 @@ IDLE DRONES (Waiting for Orders):
         prompt += f"- {d['id']}: Target: {ts}\n"
 
     prompt += """
-TACTICAL CANDIDATES:
-DANGER: Survivors in FIRE die in 60s, SMOKE in 180s, others in 600s.
-"""
+    TACTICAL CANDIDATES:
+    DANGER: Survivors in FIRE die in 60s, SMOKE in 180s, others in 600s.
+    """
     for sid, s in unscanned_sectors.items():
         prompt += f"- {sid}: {s['hazard']} | Time Remaining: {s['time_left']}s | Distance (from closest drone): {s['distance']} units\n"
 
     prompt += """
-COMMANDERS COORDINATION GOAL AND STRICT RULES:
-1. Assign EXACTLY ONE unique sector to EACH IDLE drone.
-2. USE ONLY the sector IDs provided in the TACTICAL CANDIDATES list. DO NOT hallucinate sectors.
-3. GLOBAL OPTIMIZATION: Ensure the CLOSEST drone is assigned to the most critical (low time) fire areas.
-4. CONFLICT AVOIDANCE: Do NOT assign a sector that is already being targeted by an ACTIVE teammate.
-5. BATTERY AWARENESS: Estimate if a drone has enough battery. Fire zones use 3x battery per unit distance.
-6. RECALL: If a drone has low battery (<25%) or no good targets remain, assign "__RECALL__".
+    COMMANDERS COORDINATION GOAL AND STRICT RULES:
+    1. Assign EXACTLY ONE unique sector to EACH IDLE drone.
+    2. USE ONLY the sector IDs provided in the TACTICAL CANDIDATES list. DO NOT hallucinate sectors.
+    3. GLOBAL OPTIMIZATION: Ensure the CLOSEST drone is assigned to the most critical (low time) fire areas.
+    4. CONFLICT AVOIDANCE: Do NOT assign a sector that is already being targeted by an ACTIVE teammate.
+    5. BATTERY AWARENESS: Estimate if a drone has enough battery. Fire zones use 3x battery per unit distance.
+    6. RECALL: If a drone has low battery (<25%) or no good targets remain, assign "__RECALL__".
 
-REQUIRED JSON FORMAT:
-{
-    "assignments": {
-        "drone_1": "S2_3",
-        "drone_3": "__RECALL__"
-    },
-    "reasoning": "Drone_1 sent to critical fire front S2_3; drone_3 recalled due to 20% battery."
-}
-"""
+    REQUIRED JSON FORMAT:
+    {
+        "assignments": {
+            "drone_1": "S2_3",
+            "drone_3": "__RECALL__"
+        },
+        "reasoning": "Drone_1 sent to critical fire front S2_3; drone_3 recalled due to 20% battery."
+    }
+    """
 
     try:
         print(f"--- BATCH PROMPT for {len(idle_drones)} drones ---\n{prompt[:200]}...")

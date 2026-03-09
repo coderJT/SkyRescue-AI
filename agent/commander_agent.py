@@ -132,6 +132,7 @@ async def run_commander(session):
                         if sid not in candidate_details:
                             candidate_details[sid] = {
                                 "hazard": s['hazard'].upper(),
+                                "discovered": s.get("discovered", False),
                                 "center": (round(s['center'][0], 1), round(s['center'][1], 1)),
                                 "approx_dist": round(dist, 1)
                             }
@@ -148,23 +149,24 @@ async def run_commander(session):
 
             # Build a compact prompt for the LLM brain
             prompt = f"""
-MISSION STATE:
+MISSION: Enhanced Search & Rescue (Fog of War Active)
+Drones have a 3-tile observation radius. Hazards (Fire/Smoke) are HIDDEN until a drone flies nearby.
+
+STATE:
 - Idle Drones (Current [X,Z]): {idle_drone_telemetry}
-- Scannable Sectors (Candidates [X,Z]): {candidate_details}
+- Candidates (Hazard/Discovered/[X,Z]): {candidate_details}
 
 OBJECTIVE:
-Assign exactly one unique sector to EACH AND EVERY idle drone in the list.
-STRATEGY: 
-1. Distance Optimization: Use the 'approx_dist' and coordinates to minimize travel time.
-2. Risk Priority: Prioritize FIRE zones first, then SMOKE, then CLEAR.
-3. Logical Sweep: Minimize cross-over travel between drones.
+Assign exactly one unique sector to EACH idle drone.
 
-CRITICAL: 
-- Output ONLY the base Sector ID (e.g., "S2_3").
-- Your output JSON must contain a key for EVERY drone listed in Idle Drones.
+STRATEGY: 
+1. SCOUTING: If few/no FIRE sectors are discovered, prioritize scanning 'discovered': False sectors to find the fire.
+2. TRIAGE: If FIRE is discovered, prioritize those sectors IMMEDIATELY (survivors die in 60s).
+3. EFFICIENCY: Assign drones to the CLOSEST candidates to save battery.
+4. COORDINATION: Use the X,Z coordinates to ensure drones don't cross paths unnecessarily.
 
 STRICT JSON FORMAT:
-{{"assignments": {{"drone_1": "S2_3", "drone_2": "S4_5", "drone_3": "S1_2"}} , "reasoning": "brief note on distance-aware coordination"}}
+{{"assignments": {{"drone_1": "S2_3", "drone_2": "S4_5"}} , "reasoning": "Dispatching drone_1 to scout new area, drone_2 to handle local fire."}}
 """
             
             response = await llm.ainvoke([
@@ -201,9 +203,13 @@ STRICT JSON FORMAT:
                 print(f"❌ Failed to coordinate: {e} | Raw: {content}")
 
         except Exception as e:
-            print(f"❌ Critical Agent Error: {e}")
+            if "429" in str(e):
+                print("⚠️ Rate limit exceeded. Backing off for 10 seconds...")
+                await asyncio.sleep(10)
+            else:
+                print(f"❌ Critical Agent Error: {e}")
             
-        await asyncio.sleep(4)  # Cooldown between strategic cycles
+        await asyncio.sleep(5)  # Cooldown between strategic cycles
 
 async def main():
     # Connect to the ALREADY RUNNING SSE server from start.py
