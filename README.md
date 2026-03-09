@@ -127,17 +127,17 @@ Full Model Context Protocol server with **15 tools** that any MCP client can dis
 ```
 vhack-cs3/
 ├── simulation/
-│   ├── simulation.html            # 🖥️  Main 3D simulation (Three.js, ~1800 lines)
-│   └── simulation_engine.py       # ⚙️  Core simulation logic (sectors, hazards, drones)
+│   ├── simulation.html            # 🖥️  Main 3D simulation (Three.js renderer)
+│   └── simulation_engine.py       # ⚙️  Core physics & mission logic
 ├── agent/
-│   ├── mcp_client.py              # 🔌 MCP client for tool discovery & invocation
-│   └── command_agent.py           # 🤖 Command-line agent interface
+│   ├── commander_agent.py         # 🤖 Autonomous LLM Swarm Commander (Main Brain)
+│   └── mcp_client.py              # 🔌 MCP protocol interface
 ├── mcp_app/
-│   └── mcp_server.py              # 📡 MCP Server with 15 tools (FastMCP)
+│   └── mcp_server.py              # 📡 FastMCP Server (Host of 15 tools)
 ├── drone/
-│   └── Drone.py                   # 🚁 Drone model (battery, movement, scanning)
-├── run_server.py                  # 🚀 MCP server entry point
-└── README.md                      # 📖 This file
+│   └── Drone.py                   # 🚁 Drone flight & battery model
+├── start.py                       # 🚀 Lifecycle script (Server + Browser)
+└── run_server.py                  # 📡 Low-level server entry point
 ```
 
 ---
@@ -151,61 +151,43 @@ vhack-cs3/
 - **Node.js 18+** — For the MCP Inspector (optional)
 - A modern browser (Chrome, Firefox, Edge)
 
-### 1. Clone & Install Dependencies
+### 1. Project Setup
 
 ```bash
 git clone https://github.com/YOUR_USERNAME/vhack-cs3.git
 cd vhack-cs3
 
-# Install Python dependencies
+# Install dependencies
 pip install fastapi uvicorn langchain-mistralai langchain-core pydantic mcp
 ```
 
-### 2. Start the MCP Server (SSE)
+### 2. Launch the Environment (Terminal 1)
 
-```bash
-# Set your Mistral API key and start the MCP server
-export MISTRAL_API_KEY=your_api_key_here
-python run_server.py
-```
-
-You should see:
-
-```
-Starting MCP Server (SSE transport) on port 8000...
-INFO:     Uvicorn running on http://0.0.0.0:8000
-```
-
-### 3. Start the MCP Server (via Prefect)
-
-### 3. Start the MCP Server (Local)
-
-Simply run the server locally. The browser-based simulation is configured to connect to `http://127.0.0.1:8000/sse`.
+This script starts the MCP server and automatically opens the 3D simulation in your default browser.
 
 ```bash
 # Set your Mistral API key
 export MISTRAL_API_KEY=your_api_key_here
 
-# Run the standard SSE server
-python run_server.py
+# Start the server + UI
+python start.py
 ```
 
-*Note: You can also use `python prefect_mcp.py` to run via Prefect locally for health tracking.*
+### 3. Deploy the Autonomous Commander (Terminal 2)
 
-### 4. Launch the 3D Simulation
-
-Open `simulation/simulation.html` in your browser:
+Once the simulation is running and the "START SIMULATION" button has been clicked in the UI, launch the agent to take control of the swarm.
 
 ```bash
-# macOS
-open simulation/simulation.html
-
-# Linux
-xdg-open simulation/simulation.html
-
-# Windows
-start simulation/simulation.html
+# Run the autonomous brain
+python agent/commander_agent.py
 ```
+
+### 4. Watch the Mission
+
+1. **In the Browser**: Click **"▶ Start Simulation"**.
+2. **In the Terminal**: Watch the LLM's **Chain-of-Thought** as it calculates distance-aware assignments.
+3. **Optimized Logic**: Drones will now automatically prioritize high-risk zones (Fire/Smoke) and assign the closest available units to minimize battery consumption.
+
 
 ### 4. Run the Mission
 
