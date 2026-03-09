@@ -35,9 +35,9 @@ class Drone:
     def thermal_scan(self, survivors):
         """
         Use thermal scanner to detect heat signatures within a radius of 5.
-        Costs 0.5% battery per scan.
+        Costs 0.2% battery per scan.
         """
-        self.drain_battery(0.5)
+        self.drain_battery(0.2)
         detected_survivors = []
         x1, y1, _ = self.coordinates
         
@@ -56,7 +56,7 @@ class Drone:
         """
         old_x, old_y, old_z = self.coordinates
         distance = math.sqrt((x - old_x)**2 + (y - old_y)**2 + (z - old_z)**2)
-        self.drain_battery(distance * 0.3)  # 0.3% per unit distance
+        self.drain_battery(distance * 0.02)  # 0.02% per unit distance
         self.coordinates = (x, y, z)
 
     def drain_battery(self, amount):

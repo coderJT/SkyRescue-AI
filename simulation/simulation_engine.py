@@ -45,18 +45,7 @@ class SimulationEngine:
         # We need fire and no-fly sets defined before figuring out hazard per sector
         # --- Environment: No-Fly Zones (impassable obstacles) ---
         # Each zone: {"name", "sectors": [list of sector IDs], "reason"}
-        self.no_fly_zones = [
-            {
-                "name": "Rocky Cliffs",
-                "sectors": ["S1_1", "S2_1"],
-                "reason": "Steep cliff face with unpredictable updrafts — too dangerous for drones",
-            },
-            {
-                "name": "Dense Forest Canopy",
-                "sectors": ["S0_4", "S1_4"],
-                "reason": "Thick tree canopy blocks GPS and thermal sensors",
-            },
-        ]
+        self.no_fly_zones = []
         self.no_fly_sector_ids = set()
         for zone in self.no_fly_zones:
             for macro_sid in zone["sectors"]:
@@ -128,6 +117,7 @@ class SimulationEngine:
                     "hazard": hazard,
                     "scanned": False,
                     "assigned_to": None,
+                    "status": "unscanned", # unscanned, assigned, scanned
                     "survivors_found": [],
                 }
 
@@ -161,7 +151,7 @@ class SimulationEngine:
             row, col = int(sid[1]), int(sid[3])
             for dr, dc in [(-1,0),(1,0),(0,-1),(0,1)]:
                 nr, nc = row + dr, col + dc
-                if 0 <= nr < 5 and 0 <= nc < 5:
+                if 0 <= nr < self.sector_rows and 0 <= nc < self.sector_cols:
                     adj_id = f"S{nr}_{nc}"
                     if adj_id not in self.fire_sector_ids and adj_id not in self.no_fly_sector_ids:
                         self.smoke_sector_ids.add(adj_id)
@@ -231,7 +221,58 @@ class SimulationEngine:
     def get_drone_status(self, drone_id):
         if drone_id not in self.drones:
             return {"error": f"Drone {drone_id} not found"}
-        return self.drones[drone_id].to_dict()
+        drone = self.drones[drone_id]
+        d_dict = drone.to_dict()
+        # Find if this drone has an assigned sector
+        target = None
+        for sid, s in self.sectors.items():
+            if s["assigned_to"] == drone_id and not s["scanned"]:
+                target = sid
+                break
+        d_dict["target_sector"] = target
+        return d_dict
+
+    def set_drone_target(self, drone_id, sector_id):
+        """Pure state update: Assign a drone to a sector."""
+        if drone_id not in self.drones:
+            return {"error": f"Drone {drone_id} not found"}
+        
+        # Clear previous assignment
+        for s in self.sectors.values():
+            if s["assigned_to"] == drone_id:
+                s["assigned_to"] = None
+                if s["status"] == "assigned":
+                    s["status"] = "unscanned"
+
+        if sector_id == "__RECALL__":
+            self.log(f"STATE: {drone_id} target set to __RECALL__")
+            return {"status": "success", "drone_id": drone_id, "target": "__RECALL__"}
+
+        if sector_id not in self.sectors:
+            return {"error": f"Sector {sector_id} not found"}
+        
+        self.sectors[sector_id]["assigned_to"] = drone_id
+        self.sectors[sector_id]["status"] = "assigned"
+        self.log(f"STATE: {drone_id} target set to {sector_id}")
+        return {"status": "success", "drone_id": drone_id, "target": sector_id}
+
+    def get_world_state(self):
+        """Returns the complete ground truth of the simulation."""
+        import time
+        elapsed = time.time() - self.start_time
+        
+        drones_state = {}
+        for did in self.drones:
+            drones_state[did] = self.get_drone_status(did)
+            
+        return {
+            "elapsed_seconds": round(elapsed, 1),
+            "drones": drones_state,
+            "sectors": self.sectors,
+            "discovered_survivors": self.discovered_survivors,
+            "wind": self.wind,
+            "mission_complete": all(s["scanned"] for s in self.sectors.values() if s["hazard"] != "no_fly")
+        }
 
     def move_to(self, drone_id, x, y, z):
         if drone_id not in self.drones:
@@ -246,8 +287,9 @@ class SimulationEngine:
             self.log(f"BLOCKED: {drone_id} cannot enter no-fly zone {dest_sector} at ({x},{z})")
             return {"error": f"Cannot fly to ({x},{z}) — sector {dest_sector} is a no-fly zone"}
 
-        # Calculate environmental drain multiplier at destination
-        multiplier = self._battery_multiplier_at(x, z)
+        # Calculate environmental drain multiplier at current position
+        old_coords = drone.coordinates
+        multiplier = self._battery_multiplier_at(old_coords[0], old_coords[2])
 
         # Apply extra drain for hazardous zones
         old_coords = drone.coordinates
@@ -257,7 +299,7 @@ class SimulationEngine:
             # Extra drain on top of movement drain already applied
             old_x, old_y, old_z = old_coords
             distance = math.sqrt((x - old_x)**2 + (y - old_y)**2 + (z - old_z)**2)
-            extra_drain = distance * 0.3 * (multiplier - 1)
+            extra_drain = distance * 0.02 * (multiplier - 1)
             drone.drain_battery(extra_drain)
 
         hazard_label = ""
@@ -286,7 +328,7 @@ class SimulationEngine:
         
         detected = drone.thermal_scan(active_survivors)
         if multiplier > 1.0:
-            drone.drain_battery(0.5 * (multiplier - 1))  # extra scan drain
+            drone.drain_battery(0.2 * (multiplier - 1))  # extra scan drain
 
         for s in detected:
             if s not in self.discovered_survivors:
@@ -372,7 +414,7 @@ class SimulationEngine:
         drone = self.drones[drone_id]
         sector = self.sectors[sector_id]
 
-        if drone.status != "active":
+        if drone.status not in ["active", "scanning"]:
             return {"error": f"Drone {drone_id} is {drone.status}, cannot scan sector"}
 
         cx, cy = sector["center"]

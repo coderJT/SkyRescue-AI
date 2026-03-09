@@ -23,6 +23,81 @@ if api_key:
 
 
 @mcp.tool()
+def get_world_state() -> dict:
+    """
+    Get the complete current state of the world: drones, sectors, survivors, and time.
+    Use this for high-frequency polling to keep the simulation and agent in sync.
+    """
+    try:
+        return engine.get_world_state()
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return {"error": str(e)}
+
+
+@mcp.tool()
+def update_drone_assignment(drone_id: str, sector_id: str) -> dict:
+    """
+    Command a drone to target a specific sector.
+    This is the primary way the Commander Agent issues orders.
+    """
+    try:
+        print(f"🤖 COMMAND RECEIVED: {drone_id} -> {sector_id}")
+        return engine.set_drone_target(drone_id, sector_id)
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return {"error": str(e)}
+
+
+@mcp.tool()
+def update_drone_state(drone_id: str, battery: float, x: float, y: float, z: float, status: str) -> dict:
+    """
+    Update a drone's telemetry. The simulation should call this to sync the 
+    physical movement occurring in the 3D renderer back to the server.
+    """
+    try:
+        if drone_id not in engine.drones:
+            return {"error": f"Drone {drone_id} not found"}
+        drone = engine.drones[drone_id]
+        drone.battery_remaining = battery
+        drone.coordinates = (x, y, z)
+        drone.status = status
+        return {"status": "success"}
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return {"error": str(e)}
+
+
+@mcp.tool()
+def update_environment(fire_sectors: list = None, smoke_sectors: list = None, scanned_sectors: list = None) -> dict:
+    """
+    Sync the environment state from the simulation.
+    Useful if the simulation generates dynamic hazards or scan results.
+    """
+    try:
+        if fire_sectors is not None:
+            engine.fire_sector_ids = set(fire_sectors)
+        if smoke_sectors is not None:
+            engine.smoke_sector_ids = set(smoke_sectors)
+        if scanned_sectors is not None:
+            for sid in scanned_sectors:
+                if sid in engine.sectors:
+                    if not engine.sectors[sid].get("scanned", False):
+                        print(f"🔥 update_environment MARKING AS SCANNED: {sid}")
+                    engine.sectors[sid]["scanned"] = True
+                    engine.sectors[sid]["status"] = "scanned"
+                    engine.sectors[sid]["assigned_to"] = None
+        return {"status": "success"}
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return {"error": str(e)}
+
+
+@mcp.tool()
 async def get_high_level_decision(drone_id: str, battery: float, current_pos: list[float], other_drones: list[dict]) -> str:
     """
     Use the high-level Mistral LLM brain to decide the next move for a drone.
@@ -193,14 +268,6 @@ def list_drones() -> list:
     """
     return engine.list_drones()
 
-
-@mcp.tool()
-def get_fleet_status() -> dict:
-    """
-    Get the full status of all drones in the fleet.
-    Returns each drone's name, battery level, status, and coordinates.
-    """
-    return engine.get_fleet_status()
 
 
 @mcp.tool()

@@ -337,7 +337,7 @@ window.toggleScannedSectors = function() {
     }
 };
 
-let useLLM = false;
+let useLLM = true;
 window.toggleBrain = function() {
     useLLM = !useLLM;
     const btn = document.getElementById('brain-btn');
@@ -348,7 +348,16 @@ window.toggleBrain = function() {
     }
 };
 
-const DRAIN_PER_UNIT = 0.06; // battery % drained per unit of distance traveled (clear zone)
+window.addEventListener('DOMContentLoaded', () => {
+    const btn = document.getElementById('brain-btn');
+    if (btn) {
+        btn.innerHTML = useLLM ? '🧠 Brain: LLM' : '🧠 Brain: Local';
+        btn.style.color = useLLM ? '#ff88ff' : '#d888ff';
+        btn.style.background = useLLM ? 'rgba(255,50,255,0.3)' : 'rgba(180,50,255,0.15)';
+    }
+});
+
+const DRAIN_PER_UNIT = 0.02; // battery % drained per unit of distance traveled (clear zone)
 const DRONE_FLY_HEIGHT = 6;
 const OBSTACLE_RADIUS = 1.5;
 const AVOIDANCE_LOOKAHEAD = 6;
@@ -483,6 +492,11 @@ const mcpClient = {
             
             this.connected = true;
             console.log('[MCP] Session Initialized successfully.');
+            
+            // AUTOMATIC RESET: Ensure backend matches a fresh frontend state on every page load
+            this.callTool('reset_mission', {}).then(() => {
+                console.log('[MCP] Backend state auto-reset for new session.');
+            }).catch(e => console.warn('[MCP] Auto-reset failed:', e));
         } catch (e) {
             console.error('[MCP] Initialization failed', e);
         }
@@ -1105,54 +1119,7 @@ for (let r=0;r<SECTORS;r++) for (let c=0;c<SECTORS;c++) {
     if (!NO_FLY.has(k)) globalQueue.push({r,c,k,hazard:hazardOf(r,c), assigned:false});
 }
 
-function getNextSector(d, droneIdx) {
-    let bestDist = Infinity;
-    let bestSector = null;
-    let bestCostObj = null;
-
-    let rejectedFire = 0;
-
-    for (let i = 0; i < globalQueue.length; i++) {
-        const s = globalQueue[i];
-        if (s.assigned || sectorMeshes[s.k].scanned) continue;
-        
-        const px = s.c * CELL + CELL / 2;
-        const pz = s.r * CELL + CELL / 2;
-        const dist = Math.hypot(px - d.group.position.x, pz - d.group.position.z);
-        
-        let priorityMult = s.hazard === "fire" ? 0.1 : (s.hazard === "smoke" ? 0.5 : 1.0);
-        let score = dist * priorityMult;
-        
-        const drainMult = (s.hazard==="fire"?3:s.hazard==="smoke"?1.5:1);
-        const toHazardCost = dist * DRAIN_PER_UNIT * drainMult;
-        const distFromSectorToBase = Math.hypot(px - BASE.x, pz - BASE.z);
-        const returnCost = distFromSectorToBase * DRAIN_PER_UNIT * 1.4 + 8;
-        const totalCostEstimate = toHazardCost + returnCost + 1; // +1 for scan
-        
-        if (d.battery < totalCostEstimate + 2) {
-            if (s.hazard === 'fire' && rejectedFire < 4) {
-                addThought(droneIdx, 'reason', `${DRONE_NAMES[droneIdx]} (${d.battery.toFixed(0)}% battery): ${s.k} [FIRE] costs ${totalCostEstimate.toFixed(1)}% — too expensive. Trying next sector.`);
-                rejectedFire++;
-            }
-            continue;
-        }
-
-        if (score < bestDist) {
-            bestDist = score;
-            bestSector = s;
-            bestCostObj = { dist: dist.toFixed(1), drain: drainMult.toFixed(1), toCost: toHazardCost.toFixed(1), retCost: returnCost.toFixed(1), total: totalCostEstimate.toFixed(1) };
-        }
-    }
-    
-    if (bestSector) {
-        bestSector.assigned = true;
-        addThought(droneIdx, 'reason', `${DRONE_NAMES[droneIdx]} has ${d.battery.toFixed(0)}% battery. Assigning ${bestSector.k} [${bestSector.hazard.toUpperCase()}] (${bestCostObj.dist} units, ${bestCostObj.drain}× drain). Cost: ${bestCostObj.toCost}% + ${bestCostObj.retCost}% return = ${bestCostObj.total}%.`);
-        if (bestSector.hazard === "fire") {
-            addThought(droneIdx, 'reason', `Sector ${bestSector.k} is in ACTIVE FIRE ZONE — high battery cost but survivors are likely trapped near fire fronts. Prioritizing rescue.`);
-        }
-        return bestSector;
-    }
-    addThought(droneIdx, 'warning', `${DRONE_NAMES[droneIdx]} cannot afford any remaining sector with safe return. Recalling for charging.`);
+function getNextSector(d, idx) {
     return null;
 }
 
@@ -1286,119 +1253,7 @@ window.startMission = function() {
 };
 
 function askLLMForSector(d, i) {
-    if (d.dead || d.battery <= 0) return;
-    d.state = "thinking";
-    addThought(i, 'danger', `🧠 Mistral LLM is thinking... Evaluating tactical data for drone_${i+1}`);
-    
-    // Build payload matching Python Pydantic model
-    const payload = {
-        drone_id: `drone_${i+1}`,
-        battery: d.battery,
-        current_pos: [d.group.position.x, d.group.position.y, d.group.position.z],
-        other_drones: []
-    };
-
-    // Add info about other drones to the payload
-    drones.forEach((other, idx) => {
-        if (idx !== i && !other.dead) {
-            payload.other_drones.push({
-                id: `drone_${idx+1}`,
-                pos: [other.group.position.x, other.group.position.y, other.group.position.z],
-                state: other.state,
-                target_sector: (other.target && other.target.sector) ? other.target.sector : null
-            });
-        }
-    });
-
-    // RESTORE SOURCE OF TRUTH: Re-implement tactical filtering in the browser
-    // since the forest is randomized here and we want the LLM to see reality.
-    const candidates = [];
-    const elapsed = (performance.now() - missionStartTime - totalPausedTime) / 1000;
-
-    Object.values(sectorMeshes).forEach(sm => {
-        const qEntry = globalQueue.find(q => q.k === sm.k);
-        const isAssigned = qEntry && qEntry.assigned;
-        if (!sm.scanned && !isAssigned) {
-            const center = [sm.c*CELL+CELL/2, sm.r*CELL+CELL/2];
-            const dist = Math.hypot(center[0] - d.group.position.x, center[1] - d.group.position.z);
-            
-            // Survival Timers: Fire=60s, Smoke=180s, Clear=600s
-            const limit = sm.hazard === 'fire' ? 60 : (sm.hazard === 'smoke' ? 180 : 600);
-            const timeLeft = Math.max(0, limit - elapsed);
-            
-            candidates.push({sm, dist, timeLeft, center});
-        }
-    });
-
-    // Sort by Urgency (least time left) then Distance
-    candidates.sort((a,b) => {
-        if (Math.abs(a.timeLeft - b.timeLeft) > 5) return a.timeLeft - b.timeLeft;
-        return a.dist - b.dist;
-    });
-
-    // Take top 10 most relevant to avoid overwhelming the LLM
-    const topCandidates = candidates.slice(0, 10);
-    const candidateCount = topCandidates.length;
-
-    addThought(i, 'info', `Tactical: Found ${candidateCount} scannable sectors. Sending to Commander.`);
-    
-    if (candidateCount === 0) {
-        addThought(i, 'warning', `No available sectors! All remaining are scanned or assigned to teammates.`);
-    }
-
-    // Real MCP Request to the LLM Brain Tool
-    mcpClient.callTool('get_high_level_decision', payload)
-    .then(data => {
-        if (d.dead) return; // drone died while thinking
-        
-        // MCP tools return a CallToolResult object with `content`: [{type: "text", text: "..."}]
-        let resultObj = data;
-        if (data && data.content && data.content.length > 0) {
-            try {
-                resultObj = JSON.parse(data.content[0].text);
-            } catch(e) {
-                console.warn("[MCP] Failed to parse tool text output as JSON", data.content[0].text);
-            }
-        }
-
-        const decisionStr = (resultObj?.decision || 'undefined').toUpperCase().trim();
-        const reasonStr = resultObj?.reasoning || 'No reasoning provided.';
-
-        if (decisionStr === '__RECALL__') {
-            addThought(i, 'reason', `LLM chose __RECALL__: ${reasonStr}`);
-            d.target = {x:BASE.x, z:BASE.z, sector:null, hazard:"clear"};
-            d.state = "moving";
-            addMCP(i, 'call', 'recall_for_charging', {drone_id:`drone_${i+1}`, battery:Math.round(d.battery)}, {status:'returning', target:'base'});
-        } else {
-            addThought(i, 'reason', `LLM chose ${decisionStr}: ${reasonStr}`);
-            const sec = Object.values(sectorMeshes).find(s => s.k === decisionStr);
-            if (sec) {
-                // COLLISION CHECK: Did a teammate claim this while we were thinking?
-                const qEntry = globalQueue.find(q => q.k === sec.k);
-                if (qEntry && qEntry.assigned || sec.scanned) {
-                    addThought(i, 'warning', `Collision detected! ${decisionStr} was claimed during LLM delay. Re-evaluating...`);
-                    // Immediate re-evaluation locally or via LLM
-                    setTimeout(() => askLLMForSector(d, i), 100); 
-                    return;
-                }
-
-                // Lock the sector in globalQueue so other drones don't pick it
-                if (qEntry) qEntry.assigned = true;
-
-                d.target = {x: sec.c*CELL+CELL/2, z: sec.r*CELL+CELL/2, sector: sec.k, hazard: sec.hazard};
-                d.state = "moving";
-                addMCP(i, 'call', 'move_to', {drone_id:`drone_${i+1}`, target_sector:sec.k}, {status:'moving', hazard:sec.hazard});
-                addThought(i, 'action', `Navigating to (${d.target.x.toFixed(0)}, ${d.target.z.toFixed(0)})...`);
-            } else {
-                d.state = "idle";
-                addThought(i, 'warning', `LLM returned invalid sector ${decisionStr}`);
-            }
-        }
-    })
-    .catch(err => {
-        addThought(i, 'warning', `LLM tool error: ${err.message}. Waiting...`);
-        d.state = "idle";
-    });
+    return;
 }
 
 // Camera
@@ -1487,172 +1342,12 @@ function checkSurvivorsNearDrone(d, droneIdx) {
     });
 }
 
-// ─── BATCH SWARM COORDINATION ───
-const assignmentQueue = [];  // drone indices waiting for batch assignment
+// ─── BATCH SWARM COORDINATION (REMOVED: Use Commander Agent) ───
+const assignmentQueue = [];  
 let lastBatchTime = 0;
 
 function processBatchQueue() {
-    if (assignmentQueue.length === 0 || !useLLM || missionComplete || isBatchThinking) return;
-    
-    const now = performance.now();
-    // Heavy throttle to prevent 429 errors from LLM. Wait up to 4s if only 1 drone is ready, to encourage batching.
-    const throttleLimit = assignmentQueue.length > 1 ? 2500 : 4000;
-    if (now - lastBatchTime < throttleLimit) return;  
-    lastBatchTime = now;
-    isBatchThinking = true;
-    
-    addThought(-1, 'info', `COORDINATION: Batching orders for ${assignmentQueue.length} idle drone(s)...`);
-    
-    const elapsedSec = (now - missionStartTime - totalPausedTime) / 1000;
-    
-    // Build idle drones list
-    const idleDrones = assignmentQueue.map(idx => ({
-        id: `drone_${idx + 1}`,
-        battery: drones[idx].battery,
-        pos: [drones[idx].group.position.x, drones[idx].group.position.y, drones[idx].group.position.z]
-    }));
-    
-    // Build active drones list (drones NOT in the queue)
-    const activeDrones = [];
-    drones.forEach((d, idx) => {
-        if (!d.dead && !assignmentQueue.includes(idx) && d.state === 'moving' && d.target?.sector) {
-            activeDrones.push({
-                id: `drone_${idx + 1}`,
-                pos: [d.group.position.x, d.group.position.y, d.group.position.z],
-                state: d.state,
-                target_sector: d.target.sector
-            });
-        }
-    });
-    
-    // Build unscanned sectors
-    const unscannedSectors = {};
-    const hazardMap = {};
-    Object.values(sectorMeshes).forEach(sm => {
-        const qEntry = globalQueue.find(q => q.k === sm.k);
-        const isAssigned = qEntry && qEntry.assigned;
-        if (!sm.scanned && !isAssigned) {
-            const center = [sm.c * CELL + CELL / 2, sm.r * CELL + CELL / 2];
-            const limit = sm.hazard === 'fire' ? 60 : (sm.hazard === 'smoke' ? 180 : 600);
-            const timeLeft = Math.max(0, limit - elapsedSec);
-            // Use distance from closest idle drone
-            let minDist = Infinity;
-            idleDrones.forEach(id => {
-                const dist = Math.hypot(center[0] - id.pos[0], center[1] - id.pos[2]);
-                if (dist < minDist) minDist = dist;
-            });
-            // Weight for sorting (LLM prefers lowest)
-            let weight = minDist;
-            if (sm.hazard === 'fire') weight *= 0.01;
-            else if (sm.hazard === 'smoke') weight *= 0.3;
-            
-            unscannedSectors[sm.k] = {
-                center: center,
-                distance: parseFloat(minDist.toFixed(1)),
-                time_left: parseFloat(timeLeft.toFixed(1)),
-                hazard: sm.hazard.toUpperCase(),
-                weight: weight
-            };
-            hazardMap[sm.k] = { hazard: sm.hazard };
-        }
-    });
-
-    // Convert to array, sort by weight, then map back to object to enforce JSON key ordering
-    let sortedEntries = Object.entries(unscannedSectors).sort((a,b) => a[1].weight - b[1].weight);
-    let finalUnscannedSectors = {};
-    for (let [k, v] of sortedEntries) {
-        delete v.weight; // clean payload
-        finalUnscannedSectors[k] = v;
-    }
-    
-    // Copy the queue and clear it (drones will be re-queued if assignment fails)
-    const batchIndices = [...assignmentQueue];
-    assignmentQueue.length = 0;
-    
-    if (Object.keys(finalUnscannedSectors).length === 0) {
-        // No sectors left — recall all
-        batchIndices.forEach(idx => {
-            const d = drones[idx];
-            d.target = {x: BASE.x, z: BASE.z, sector: null, hazard: "clear"};
-            d.state = "moving";
-            addThought(idx, 'reason', `No sectors remain. Returning to base.`);
-        });
-        return;
-    }
-    
-    mcpClient.callTool('get_batch_decision', {
-        idle_drones: idleDrones,
-        active_drones: activeDrones,
-        unscanned_sectors: finalUnscannedSectors,
-        hazard_map: hazardMap
-    })
-    .then(data => {
-        let resultObj = data;
-        if (data && data.content && data.content.length > 0) {
-            try {
-                console.log("[MCP Batch] Tool Raw Output:", data.content[0].text);
-                resultObj = JSON.parse(data.content[0].text);
-                console.log("[MCP Batch] Parsed Result:", resultObj);
-            } catch(e) {
-                console.warn("[MCP] Failed to parse batch tool text output as JSON", data.content[0].text);
-            }
-        }
-
-        const assignments = resultObj.assignments || {};
-        const reasoning = resultObj.reasoning || 'No reasoning.';
-        addThought(-1, 'reason', `COMMANDER: ${reasoning}`);
-        
-        batchIndices.forEach(idx => {
-            const d = drones[idx];
-            if (d.dead) return;
-            
-            const droneKey = `drone_${idx + 1}`;
-            const assigned = assignments[droneKey];
-            
-            if (!assigned || assigned === '__RECALL__') {
-                d.target = {x: BASE.x, z: BASE.z, sector: null, hazard: "clear"};
-                d.state = "moving";
-                addThought(idx, 'reason', `Commander: RECALL — ${assigned === '__RECALL__' ? 'low battery or no targets' : 'no assignment received'}`);
-                addMCP(idx, 'call', 'recall_for_charging', {drone_id: droneKey}, {status: 'returning', target: 'base'});
-            } else {
-                const sec = Object.values(sectorMeshes).find(s => s.k === assigned);
-                if (sec && !sec.scanned) {
-                    const qEntry = globalQueue.find(q => q.k === sec.k);
-                    if (qEntry) qEntry.assigned = true;
-                    d.target = {x: sec.c * CELL + CELL / 2, z: sec.r * CELL + CELL / 2, sector: sec.k, hazard: sec.hazard};
-                    d.state = "moving";
-                    addThought(idx, 'action', `Commander assigned → ${sec.k} [${sec.hazard.toUpperCase()}]. Moving out!`);
-                    addMCP(idx, 'call', 'move_to', {drone_id: droneKey, target_sector: sec.k}, {status: 'moving', hazard: sec.hazard});
-                } else {
-                    // Sector already scanned or invalid — re-queue
-                    d.state = "waiting_orders";
-                    assignmentQueue.push(idx);
-                    addThought(idx, 'warning', `Commander assigned ${assigned} but it's already scanned. Re-queuing...`);
-                }
-            }
-        });
-    })
-    .catch(err => {
-        addThought(-1, 'warning', `Batch coordination error: ${err.message}. Falling back to local.`);
-        // Fallback: assign locally
-        batchIndices.forEach(idx => {
-            const d = drones[idx];
-            if (d.dead) return;
-            const s = getNextSector(d, idx);
-            if (s) {
-                const qEntry = globalQueue.find(q => q.k === s.k);
-                if (qEntry) qEntry.assigned = true;
-                d.target = {x: s.c * CELL + CELL / 2, z: s.r * CELL + CELL / 2, sector: s.k, hazard: s.hazard};
-                d.state = "moving";
-            } else {
-                d.target = {x: BASE.x, z: BASE.z, sector: null, hazard: "clear"};
-                d.state = "moving";
-            }
-        });
-    })
-    .finally(() => {
-        isBatchThinking = false;
-    });
+    return;
 }
 
 // ─── ANIMATION LOOP ───
@@ -1667,7 +1362,7 @@ function animate() {
     elapsed += dt;
     frameCount++;
 
-    if (useLLM) processBatchQueue();
+    // processBatchQueue(); // Logic moved to Agent
 
     // Fire animation
     fireParticles.forEach(f => {
@@ -1724,8 +1419,8 @@ function animate() {
         // Wake up idle drones at base if there are unassigned sectors
         if (d.state === "idle" && !d.recharging && !d.dead && missionStarted && !missionComplete) {
             if (useLLM) {
+                d.state = "waiting_orders";
                 if (!assignmentQueue.includes(i)) {
-                    d.state = "waiting_orders";
                     assignmentQueue.push(i);
                     addThought(i, 'info', `Waiting for swarm coordinator...`);
                 }
@@ -1750,6 +1445,9 @@ function animate() {
             if (d.target && d.target.sector) {
                 const qs = globalQueue.find(q => q.k === d.target.sector);
                 if (qs) qs.assigned = false; // release sector for other drones
+                if (useLLM && mcpClient && mcpClient.connected) {
+                    mcpClient.callTool('update_drone_assignment', {drone_id: `drone_${i+1}`, sector_id: '__RECALL__'}).catch(e=>console.warn(e));
+                }
             }
             d.battery = 0; d.dead = true; d.state = 'idle'; d.recharging = false;
             d.group.position.y = 0.5; // crash to ground
@@ -1770,12 +1468,9 @@ function animate() {
                     return;
                 }
                 addThought(i, 'action', `Recharged to 100%. Ready for deployment.`);
-                const s = getNextSector(d, i);
-                if (s) {
-                    d.target = {x:s.c*CELL+CELL/2, z:s.r*CELL+CELL/2, sector:s.k, hazard:s.hazard};
-                    d.state = "moving";
-                    addThought(i, 'reason', `Resuming mission → sector ${s.k}. Battery: 100%.`);
-                } else { d.state = "idle"; addThought(i, 'reason', `All sectors covered.`); }
+                addThought(i, 'action', `Recharged to 100%. Ready for deployment.`);
+                // Waiting for external command via syncWithServer
+                d.state = "idle";
             }
             d.group.position.y = 3 + Math.sin(elapsed*2+i)*0.15;
             scanSpheres[i].position.copy(d.group.position);
@@ -1788,7 +1483,8 @@ function animate() {
             const dist = Math.sqrt(dx*dx + dz*dz);
 
             if (dist > 0.5) {
-                const baseSpd = MOVE_SPEED * (d.target.hazard==="fire"?0.6:1);
+                const currentHazardMove = hazardOf(Math.floor(p.z/CELL), Math.floor(p.x/CELL));
+                const baseSpd = MOVE_SPEED * (currentHazardMove==="fire"?0.6:1);
                 let dirX = dx/dist, dirZ = dz/dist;
                 if (d.escapeMode === "backtrack") {
                     // Strong force away from target
@@ -1848,7 +1544,9 @@ function animate() {
                 d.group.lookAt(lookTarget);
 
                 // Battery drain — proportional to distance moved (frame-rate independent)
-                const mult = d.target.hazard==="fire"?3:d.target.hazard==="smoke"?1.5:1;
+                const currentSector = `S${Math.floor(p.z/CELL)}_${Math.floor(p.x/CELL)}`;
+                const currentHazard = hazardOf(Math.floor(p.z/CELL), Math.floor(p.x/CELL));
+                const mult = currentHazard==="fire"?3:currentHazard==="smoke"?1.5:1;
                 d.battery -= baseSpd * DRAIN_PER_UNIT * mult;
 
                 // Smart RTB: estimate battery needed to return (same formula + 40% path overhead + margin)
@@ -1857,6 +1555,9 @@ function animate() {
                 if (d.battery < batteryToReturn && d.target.sector) {
                     const qs = globalQueue.find(q => q.k === d.target.sector);
                     if (qs) qs.assigned = false; // release sector for other drones
+                    if (useLLM && mcpClient && mcpClient.connected) {
+                        mcpClient.callTool('update_drone_assignment', {drone_id: `drone_${i+1}`, sector_id: '__RECALL__'}).catch(e=>console.warn(e));
+                    }
                     addThought(i, 'danger', `Battery ${d.battery.toFixed(0)}% — est. ${batteryToReturn.toFixed(0)}% needed to RTB. Returning NOW!`);
                     d.target = {x:BASE.x, z:BASE.z, sector:null, hazard:"clear"};
                     d.state = "moving";
@@ -1900,8 +1601,8 @@ function animate() {
                     
                     addMCP(i, 'call', 'scan_sector', {drone_id:`drone_${i+1}`, sector:d.target.sector}, {scanned:true, survivors_in_range: survivorMeshes.filter(s=>s.found).length});
                     addThought(i, 'reason', `Scan done: ${d.target.sector}. Bat: ${d.battery.toFixed(0)}%. Total: ${d.sectorsScanned} sectors.`);
+                    d.battery -= 0.2; // Drain exactly once for the scan
                 }
-                d.battery -= 1.0;
                 scanSpheres[i].material.color.setHex(0x0066ff);
                 scanSpheres[i].material.opacity = 0.04;
 
@@ -1941,22 +1642,13 @@ function animate() {
                 } else if (!missionComplete) {
                     // IMMEDIATE ASSIGNMENT — push to batch queue
                     if (useLLM) {
+                        d.state = "waiting_orders";
                         if (!assignmentQueue.includes(i)) {
-                            d.state = "waiting_orders";
                             assignmentQueue.push(i);
                         }
                     } else {
-                        const s = getNextSector(d, i);
-                        if (s) {
-                            d.target = {x: s.c*CELL+CELL/2, z: s.r*CELL+CELL/2, sector: s.k, hazard: s.hazard};
-                            d.state = "moving";
-                            addThought(i, 'action', `Next → sector ${s.k} [${s.hazard.toUpperCase()}]`);
-                            addMCP(i, 'call', 'move_to', {drone_id:`drone_${i+1}`, target_sector:s.k}, {status:'moving', hazard:s.hazard});
-                        } else {
-                            d.target = {x:BASE.x, z:BASE.z, sector:null, hazard:"clear"};
-                            d.state = "moving";
-                            addThought(i, 'reason', `No sectors affordable. RTB for charging.`);
-                        }
+                        d.state = "waiting_orders";
+                        addThought(i, 'danger', `Local brain deactivated. Waiting for MCP...`);
                     }
                 } else {
                     d.state = "moving"; // Returning to base
@@ -2073,6 +1765,77 @@ addEventListener('resize', () => {
     cam.updateProjectionMatrix();
     renderer.setSize(innerWidth, innerHeight);
 });
+
+// ─── MCP SYNC LOOP ───
+let isSyncing = false;
+async function syncWithServer() {
+    if (isSyncing || !mcpClient || !mcpClient.connected) return;
+    isSyncing = true;
+    try {
+        const scanned = Object.keys(sectorMeshes).filter(k => sectorMeshes[k].scanned);
+        await mcpClient.callTool('update_environment', { scanned_sectors: scanned });
+        for(let i=0; i<drones.length; i++) {
+            const d = drones[i];
+            const safeBat = Number.isFinite(d.battery) ? Math.max(0, d.battery) : 0;
+            const safeX = Number.isFinite(d.group.position.x) ? d.group.position.x : 0;
+            const safeY = Number.isFinite(d.group.position.y) ? d.group.position.y : 0;
+            const safeZ = Number.isFinite(d.group.position.z) ? d.group.position.z : 0;
+            
+            await mcpClient.callTool('update_drone_state', {
+                drone_id: `drone_${i+1}`,
+                battery: safeBat,
+                x: safeX,
+                y: safeY,
+                z: safeZ,
+                status: safeBat <= 0 ? 'offline' : (d.recharging ? 'charging' : (d.state === 'idle' ? 'active' : d.state))
+            });
+        }
+        const resp = await mcpClient.callTool('get_world_state', {});
+        if (resp && resp.content && resp.content.length > 0) {
+            const world = JSON.parse(resp.content[0].text);
+            
+            // Sync Hazards and Scanned Status
+            Object.keys(world.sectors).forEach(sid => {
+                const sServer = world.sectors[sid];
+                const sm = sectorMeshes[sid];
+                if (sm) {
+                    // Update hazard if it changed or for initial alignment
+                    if (sm.hazard !== sServer.hazard) {
+                        sm.hazard = sServer.hazard;
+                    }
+                    if (sServer.scanned) {
+                        sm.scanned = true;
+                    }
+                }
+            });
+
+            // Sync Drone Assignments
+            Object.keys(world.drones).forEach(did => {
+                const idx = parseInt(did.split('_')[1]) - 1;
+                const d = drones[idx];
+                if (!d) return; 
+                const sDrone = world.drones[did];
+                if (sDrone.target_sector && (!d.target || d.target.sector !== sDrone.target_sector)) {
+                    const qIdx = assignmentQueue.indexOf(idx);
+                    if (qIdx > -1) assignmentQueue.splice(qIdx, 1);
+                    if (sDrone.target_sector === "__RECALL__") {
+                         d.target = {x: BASE.x, z: BASE.z, sector: null, hazard: "clear"};
+                         d.state = "moving";
+                    } else {
+                        const sm = sectorMeshes[sDrone.target_sector];
+                        if (sm) {
+                            d.target = {x: sm.c*CELL+CELL/2, z: sm.r*CELL+CELL/2, sector: sDrone.target_sector, hazard: sm.hazard};
+                            d.state = "moving";
+                            addThought(idx, 'action', `Order received: Proceed to ${sDrone.target_sector}`);
+                        }
+                    }
+                }
+            });
+        }
+    } catch(e) { console.warn("Sync failed:", e); }
+    finally { isSyncing = false; }
+}
+setInterval(syncWithServer, 500);
 </script>
 </body>
 </html>
