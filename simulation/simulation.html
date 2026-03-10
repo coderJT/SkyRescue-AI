@@ -59,6 +59,19 @@
             border-top: 1px dashed #555; border-bottom: 1px dashed #555; letter-spacing: 1px;
         }
         .thought-drone-tag { font-size: 9px; font-weight: 700; margin-right: 4px; padding: 1px 4px; border-radius: 2px; }
+        
+        /* Deep Reasoning Tags */
+        .reason-tag {
+            font-weight: 700;
+            padding: 1px 4px;
+            border-radius: 3px;
+            font-size: 9px;
+            margin-right: 2px;
+            text-transform: uppercase;
+        }
+        .obs-tag { background: rgba(78, 204, 163, 0.2); color: #4ecca3; border: 1px solid rgba(78, 204, 163, 0.3); }
+        .risk-tag { background: rgba(255, 170, 0, 0.2); color: #ffaa00; border: 1px solid rgba(255, 170, 0, 0.3); }
+        .dec-tag { background: rgba(0, 210, 255, 0.2); color: #00d2ff; border: 1px solid rgba(0, 210, 255, 0.3); }
         #mcp-toggle {
             display: inline-block; margin-left: 6px; padding: 2px 8px; border-radius: 4px; cursor: pointer;
             font-size: 9px; font-weight: 600; border: 1px solid #009988; color: #44ccbb;
@@ -518,10 +531,24 @@ window.toggleMCP = function() {
 function addThought(droneIdx, type, msg) {
     if (missionComplete) return; // Suppress all logs after mission ends
     let reasonPrefix = useLLM ? '🧠 REASONING (LLM): ' : '🧠 REASONING (LOCAL): ';
+    const actionPrefix = '⚡ ACTION: ';
     const prefixes = {
-        'action': '⚡ ACTION: ', 'reason': reasonPrefix, 'danger': '🚫 DANGER: ',
-        'alert': '🔥 ALERT: ', 'warning': '⚠️ WARNING: ', 'info': '   i ', 'phase': ''
+        'action': actionPrefix, 
+        'reason': reasonPrefix, 
+        'danger': '🚫 DANGER: ',
+        'alert': '🔥 ALERT: ', 
+        'warning': '⚠️ WARNING: ', 
+        'info': '   i ', 
+        'phase': ''
     };
+
+    // Parse and highlight deep reasoning tags
+    if (type === 'reason') {
+        msg = msg.replace(/\[OBSERVATION\]:/g, '<span class="reason-tag obs-tag">[OBSERVATION]</span>');
+        msg = msg.replace(/\[RISK ASSESSMENT\]:/g, '<span class="reason-tag risk-tag">[RISK ASSESSMENT]</span>');
+        msg = msg.replace(/\[DECISION\]:/g, '<span class="reason-tag dec-tag">[DECISION]</span>');
+    }
+
     const formattedMsg = (prefixes[type] || '') + msg;
 
     // Ensure thoughtLogs has enough arrays for the current number of drones
@@ -557,10 +584,11 @@ function addMCP(droneIdx, callType, toolName, args, response) {
     // ACTUALLY execute the tool call on the Python server so it stays in sync
     if (useLLM && mcpClient && mcpClient.connected) {
         // We do this asynchronously without awaiting to not block the simulation loop
-        mcpClient.callTool(toolName, args).catch(e => {
+        return mcpClient.callTool(toolName, args).catch(e => {
             console.warn(`[MCP Sync Error] Tool ${toolName} failed:`, e);
         });
     }
+    return Promise.resolve();
 }
 
 function renderThoughts() {
@@ -1113,7 +1141,7 @@ function formatTime(sec) {
     const m = Math.floor(sec/60), s = Math.floor(sec%60);
     return `${m}m ${s.toString().padStart(2,'0')}s`;
 }
-window.startMission = function() {
+window.startMission = async function() {
     if (missionStarted) return;
     missionStarted = true;
     missionStartTime = performance.now();
@@ -1210,27 +1238,12 @@ window.startMission = function() {
     addThought(-1, 'phase', 'PHASE 3: EXECUTION — Autonomous wildfire search sweep');
 
     // Reset the backend simulation engine timer and survivors
-    addMCP(0, 'call', 'reset_mission', {}, {status:'resetting'});
+    await addMCP(0, 'call', 'reset_mission', {}, {status:'resetting'});
+    await addMCP(0, 'call', 'start_mission', {}, {status:'starting'});
     
-    // Spawn Survivors dynamically
-    for(let i=0; i<survCount; i++) {
-        let valid = false;
-        let sx, sz;
-        while(!valid) {
-            sx = 5 + Math.random() * (GRID-10);
-            sz = 5 + Math.random() * (GRID-10);
-            const c = Math.floor(sx/CELL);
-            const r = Math.floor(sz/CELL);
-            if (hazardOf(r,c) !== 'no_fly') valid = true;
-        }
-        SURVIVORS.push({x:sx, y:0, z:sz});
-
-        const mesh = new THREE.Mesh(new THREE.SphereGeometry(0.8,12,12), new THREE.MeshStandardMaterial({color:0xff2200, emissive:0xff3300, emissiveIntensity:0.7, roughness:0.3}));
-        mesh.position.set(sx, 0.8, sz); scene.add(mesh);
-        const ring = new THREE.Mesh(new THREE.TorusGeometry(1.4,0.08,8,24), new THREE.MeshBasicMaterial({color:0xff4400, transparent:true, opacity:0.3}));
-        ring.rotation.x = -Math.PI/2; ring.position.set(sx, 0.2, sz); scene.add(ring);
-        survivorMeshes.push({body:mesh, ring, found:false});
-    }
+    // Mission meta
+    missionGoal = document.getElementById('mission-goal').value;
+    totalSurvivorsInitially = survCount;
     
     addThought(-1, 'reason', 'Strategy: Prioritize fire-adjacent sectors where survivors are most likely trapped. Skip no-fly sectors.');
     
@@ -1294,18 +1307,17 @@ window.killDrone = function(idx) {
 };
 
 // Status
-let totalFound = 0;
 let missionGoal = "scanAll";
 let totalSurvivorsInitially = 0;
+let totalFound = 0;
+let serverMetrics = { elapsed: 0, found: 0, total: 0, scanned: 0, scannable: 0 };
+
 function updateStatus() {
     let h = '';
-    const scanned = Object.values(sectorMeshes).filter(s=>s.scanned).length;
-    const scannable = Object.values(sectorMeshes).filter(s=>s.hazard!=="no_fly").length;
-    h += `<div class="sr"><span class="sl">Coverage</span><span class="sv">${scanned}/${scannable}</span></div>`;
-    h += `<div class="sr"><span class="sl">Survivors</span><span class="sv det">${totalFound}/${SURVIVORS.length}</span></div>`;
+    h += `<div class="sr"><span class="sl">Coverage</span><span class="sv">${serverMetrics.scanned}/${serverMetrics.scannable}</span></div>`;
+    h += `<div class="sr"><span class="sl">Survivors</span><span class="sv det">${serverMetrics.found}/${serverMetrics.total}</span></div>`;
     if (missionStarted) {
-        const elapsedSec = (performance.now() - missionStartTime - totalPausedTime) / 1000;
-        h += `<div class="sr"><span class="sl">Time</span><span class="sv">${formatTime(elapsedSec)}</span></div>`;
+        h += `<div class="sr"><span class="sl">Time</span><span class="sv">${formatTime(serverMetrics.elapsed)}</span></div>`;
     }
     h += `<div class="sr"><span class="sl">Obstacles</span><span class="sv">${obstacles.length} tracked</span></div>`;
     h += '<hr style="border-color:#222;margin:4px 0">';
@@ -1317,29 +1329,10 @@ function updateStatus() {
         h += `<div class="sr"><span class="sl" style="color:${DRONE_COLORS[i]}; display:flex; align-items:center;">${st} D${i+1}${bp}${killBtn}</span><span class="sv ${batClass}">${d.battery.toFixed(0)}%</span></div>`;
     });
     document.getElementById('sc').innerHTML = h;
-    document.getElementById('alert-box').classList.toggle('show', totalFound > 0);
+    document.getElementById('alert-box').classList.toggle('show', serverMetrics.found > 0);
 }
 
-// Survivor detection
-function checkSurvivorsNearDrone(d, droneIdx) {
-    const p = d.group.position;
-    SURVIVORS.forEach((s, si) => {
-        if (!survivorMeshes[si].found) {
-            const sd = Math.hypot(s.x - p.x, s.z - p.z);
-            if (sd <= SCAN_RADIUS) {
-                survivorMeshes[si].found = true;
-                survivorMeshes[si].body.material.color.setHex(0x00ff44);
-                survivorMeshes[si].body.material.emissive.setHex(0x00ff44);
-                scanSpheres[droneIdx].material.color.setHex(0x76ff03);
-                scanSpheres[droneIdx].material.opacity = 0.12;
-                totalFound++;
-                const elapsedSec = (performance.now() - missionStartTime - totalPausedTime) / 1000;
-                addMCP(droneIdx, 'call', 'thermal_scan', {drone_id:`drone_${droneIdx+1}`, x:s.x, z:s.z}, {survivor_found:true, location:[s.x,s.z], total_found:totalFound, time:formatTime(elapsedSec)});
-                addThought(droneIdx, 'alert', `🔥 SURVIVOR #${totalFound} DETECTED at (${s.x}, ${s.z})! [${formatTime(elapsedSec)}]`);
-            }
-        }
-    });
-}
+// Survivor detection removed. Handled by backend thermal_scan.
 
 // ─── BATCH SWARM COORDINATION (REMOVED: Use Commander Agent) ───
 const assignmentQueue = [];  
@@ -1376,6 +1369,8 @@ function animate() {
 
     survivorMeshes.forEach((s,i) => {
         if (!s.found) {
+            s.body.position.y = 0.4 + Math.sin(elapsed*1.5+i)*0.1;
+        } else if (s.ring) {
             s.body.position.y = 0.8 + Math.sin(elapsed*1.5+i)*0.3;
             s.ring.scale.setScalar(1 + Math.sin(elapsed*2+i)*0.2);
         }
@@ -1592,15 +1587,16 @@ function animate() {
                     sectorMeshes[d.target.sector].scanned = true;
                     sectorMeshes[d.target.sector].mesh.material.color.setHex(0x152215);
                     sectorMeshes[d.target.sector].mesh.material.opacity = 0.4;
-                    checkSurvivorsNearDrone(d, i);
                     d.sectorsScanned++;
                     
                     const qs = globalQueue.find(q => q.k === d.target.sector);
                     if (qs) qs.assigned = false;
                     
-                    addMCP(i, 'call', 'scan_sector', {drone_id:`drone_${i+1}`, sector:d.target.sector}, {scanned:true, survivors_in_range: survivorMeshes.filter(s=>s.found).length});
+                    addMCP(i, 'call', 'scan_sector', {drone_id:`drone_${i+1}`, sector_id:d.target.sector}, {scanned:true, survivors_in_range: survivorMeshes.filter(s=>s.found).length});
                     addThought(i, 'reason', `Scan done: ${d.target.sector}. Bat: ${d.battery.toFixed(0)}%. Total: ${d.sectorsScanned} sectors.`);
                     d.battery -= 0.2; // Drain exactly once for the scan
+                    d.state = "idle"; // RESET TO IDLE SO AGENT CAN REASSIGN
+                    d.target.sector = null;
                 }
                 scanSpheres[i].material.color.setHex(0x0066ff);
                 scanSpheres[i].material.opacity = 0.04;
@@ -1793,6 +1789,23 @@ async function syncWithServer() {
         if (resp && resp.content && resp.content.length > 0) {
             const world = JSON.parse(resp.content[0].text);
             
+            // Sync Mission Log (Reasoning)
+            if (world.mission_log) {
+                world.mission_log.forEach(entry => {
+                    // Avoid duplicating logs already in the list
+                    // We check if it's already in the global thought list if it's a strategy
+                    if (entry.includes("🧠 STRATEGY:")) {
+                        const strat = entry.split("🧠 STRATEGY:")[1].trim();
+                        // Deduplicate roughly by content for now
+                        const exists = thoughtLogs.some(log => log.some(t => t.msg.includes(strat)));
+                        if (!exists) addThought(-1, 'phase', `🧠 STRATEGY: ${strat}`);
+                    }
+                    if (entry.includes("REASON:")) {
+                        // REASON logs are handled by drone assignment sync below
+                    }
+                });
+            }
+
             // Sync Hazards and Scanned Status
             Object.keys(world.sectors).forEach(sid => {
                 const sServer = world.sectors[sid];
@@ -1837,11 +1850,96 @@ async function syncWithServer() {
                         if (sm) {
                             d.target = {x: sm.c*CELL+CELL/2, z: sm.r*CELL+CELL/2, sector: sDrone.target_sector, hazard: sm.hazard};
                             d.state = "moving";
-                            addThought(idx, 'action', `Order received: Proceed to ${sDrone.target_sector}`);
+                            const droneReason = sDrone.reason || `Proceed to ${sDrone.target_sector}`;
+                            addThought(idx, 'reason', droneReason);
                         }
                     }
                 }
             });
+
+            // --- SYNC SURVIVORS & MISSION STATUS ---
+            serverMetrics.elapsed = world.elapsed_seconds;
+            serverMetrics.found = world.found_survivors;
+            serverMetrics.total = world.total_survivors;
+            serverMetrics.scanned = world.sectors_scanned;
+            serverMetrics.scannable = world.total_scannable_sectors;
+
+            // Sync Mission Completion
+            if (world.mission_complete && !missionComplete) {
+                missionComplete = true;
+                const totalTime = formatTime(world.elapsed_seconds);
+                addThought(-1, 'phase', 'PHASE 4: MISSION COMPLETE — Summary');
+                addThought(-1, 'alert', `🎯 MISSION SUCCESS! [Total Time: ${totalTime}]`);
+                document.getElementById('final-time').textContent = totalTime;
+                document.getElementById('final-found').textContent = `${world.found_survivors}/${world.total_survivors}`;
+                document.getElementById('final-sectors').textContent = `${world.sectors_scanned}/${world.total_scannable_sectors}`;
+                document.getElementById('success-modal').style.display = 'flex';
+                
+                drones.forEach((d, i) => {
+                    if (!d.dead) {
+                        d.target = {x: BASE.x, z: BASE.z, sector: null, hazard: "clear"};
+                        d.state = "moving";
+                    }
+                });
+            }
+
+            // Sync Survivors (God Mode Visualization)
+            if (world.all_survivors) {
+                totalFound = world.found_survivors; // Sync HUD counter
+                const discoveredSet = new Set((world.discovered_survivors || []).map(p => `${p[0]},${p[2]}`));
+                
+                world.all_survivors.forEach(pos => {
+                    const id = `${pos[0]},${pos[2]}`;
+                    const isDiscovered = discoveredSet.has(id);
+                    
+                    // Check if we already have a mesh at this pos
+                    let existing = survivorMeshes.find(m => Math.abs(m.body.position.x - pos[0]) < 0.5 && Math.abs(m.body.position.z - pos[2]) < 0.5);
+                    
+                    if (!existing) {
+                        // Create NEW visual (Red = Unfound, Green = Found)
+                        const color = isDiscovered ? 0x00ff44 : 0xff3300;
+                        const mesh = new THREE.Mesh(
+                            new THREE.SphereGeometry(isDiscovered ? 0.8 : 0.4, 12, 12), 
+                            new THREE.MeshStandardMaterial({
+                                color: color, 
+                                emissive: color, 
+                                emissiveIntensity: isDiscovered ? 0.7 : 0.4, 
+                                roughness: 0.3
+                            })
+                        );
+                        mesh.position.set(pos[0], isDiscovered ? 0.8 : 0.4, pos[2]); 
+                        scene.add(mesh);
+                        
+                        let ring = null;
+                        if (isDiscovered) {
+                            ring = new THREE.Mesh(new THREE.TorusGeometry(1.4,0.08,8,24), new THREE.MeshBasicMaterial({color:0x00ff44, transparent:true, opacity:0.3}));
+                            ring.rotation.x = -Math.PI/2; ring.position.set(pos[0], 0.2, pos[2]); scene.add(ring);
+                        }
+                        
+                        survivorMeshes.push({body:mesh, ring, found:isDiscovered, pos_id: id});
+                        
+                        // Add to SURVIVORS array for minimap
+                        SURVIVORS.push({x: pos[0], y: pos[1], z: pos[2], found: isDiscovered});
+                    } else if (isDiscovered && !existing.found) {
+                        // TRANSITION: Unfound (Red) -> Found (Green)
+                        existing.found = true;
+                        existing.body.material.color.setHex(0x00ff44);
+                        existing.body.material.emissive.setHex(0x00ff44);
+                        existing.body.material.emissiveIntensity = 0.7;
+                        existing.body.scale.setScalar(2); // Make it larger (0.4 -> 0.8)
+                        existing.body.position.y = 0.8;
+                        
+                        // Add Pulsing Ring
+                        const ring = new THREE.Mesh(new THREE.TorusGeometry(1.4,0.08,8,24), new THREE.MeshBasicMaterial({color:0x00ff44, transparent:true, opacity:0.3}));
+                        ring.rotation.x = -Math.PI/2; ring.position.set(pos[0], 0.2, pos[2]); scene.add(ring);
+                        existing.ring = ring;
+                        
+                        // Sync Minimap
+                        const m = SURVIVORS.find(s => Math.abs(s.x - pos[0]) < 0.5 && Math.abs(s.z - pos[2]) < 0.5);
+                        if (m) m.found = true;
+                    }
+                });
+            }
         }
     } catch(e) { console.warn("Sync failed:", e); }
     finally { isSyncing = false; }

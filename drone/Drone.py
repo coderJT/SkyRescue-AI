@@ -32,19 +32,19 @@ class Drone:
         """
         self.status = status
 
-    def thermal_scan(self, survivors):
+    def thermal_scan(self, survivors, radius=14.5):
         """
-        Use thermal scanner to detect heat signatures within a radius of 5.
+        Use thermal scanner to detect heat signatures within a radius (default 14.5).
         Costs 0.2% battery per scan.
         """
         self.drain_battery(0.2)
         detected_survivors = []
-        x1, y1, _ = self.coordinates
+        x1, _, z1 = self.coordinates
         
         for survivor in survivors:
-            x2, y2, _ = survivor
-            distance = ((x2 - x1)**2 + (y2 - y1)**2)**0.5
-            if distance <= 5:
+            x2, _, z2 = survivor
+            distance = ((x2 - x1)**2 + (z2 - z1)**2)**0.5
+            if distance <= radius:
                 detected_survivors.append(survivor)
         
         return detected_survivors

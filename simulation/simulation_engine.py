@@ -42,6 +42,7 @@ class SimulationEngine:
         self.sector_width = self.grid_size / self.sector_cols
         self.sector_height = self.grid_size / self.sector_rows
         self.sectors = {}
+        self.mission_status = "waiting" # waiting | active | success | failure
         
         # --- Environment: No-Fly Zones (fixed landmarks) ---
         self.no_fly_zones = []
@@ -86,14 +87,14 @@ class SimulationEngine:
         
 
         self.smoke_multiplier = 1.5
-        # Discover initial base area (larger 5-tile radius)
+        # Discover initial base area (11x11 block)
         self._update_discovery(5, 5, radius=5)
 
         # --- Environment: Wind ---
         self.wind = {
-            "direction": "NE",  # Wind blowing north-east
+            "angle_deg": 45,  # 45 deg = NE (Wind blowing FROM SW TO NE)
             "speed_kmh": 35,
-            "effect": "Drones flying against the wind (SW direction) use 1.3× battery",
+            "description": "Wind blowing towards North-East (45°)",
             "battery_multiplier_against": 1.3,
         }
 
@@ -179,7 +180,7 @@ class SimulationEngine:
             elif true_hazard == "smoke": limit = 180
             self.survivors.append({"pos": (round(x,1), 0, round(z,1)), "limit": limit, "expired": False})
 
-    def _update_discovery(self, x, z, radius=3):
+    def _update_discovery(self, x, z, radius=5):
         """Reveal true_hazard for sectors within `radius` tiles of (x, z)."""
         center_sid = self._get_sector_at(x, z)
         parts = center_sid[1:].split("_")
@@ -222,7 +223,16 @@ class SimulationEngine:
         self._generate_random_hazards()
         self._generate_random_survivors()
         self._update_discovery(5, 5, radius=5) # Discover base
-        return {"status": "success", "message": "Mission state fully reset."}
+        self.mission_status = "waiting"
+        return {"status": "success", "message": "Mission state fully reset and waiting for start."}
+
+    def start_mission(self):
+        """Called when the user clicks explicitly to start the simulation."""
+        self.mission_status = "active"
+        import time
+        self.start_time = time.time()
+        self.log("Mission Started!")
+        return {"status": "success", "message": "Mission started."}
 
     def _get_sector_at(self, x, z):
         """Return the sector ID for a given coordinate."""
@@ -254,17 +264,22 @@ class SimulationEngine:
         d_dict = drone.to_dict()
         # Find if this drone has an assigned sector
         target = None
+        current_reason = getattr(drone, 'current_reason', None)
         for sid, s in self.sectors.items():
             if s["assigned_to"] == drone_id and not s["scanned"]:
                 target = sid
                 break
         d_dict["target_sector"] = target
+        d_dict["reason"] = current_reason
         return d_dict
 
-    def set_drone_target(self, drone_id, sector_id):
-        """Pure state update: Assign a drone to a sector."""
+    def set_drone_target(self, drone_id, sector_id, reason=None):
+        """Pure state update: Assign a drone to a sector with specific reasoning."""
         if drone_id not in self.drones:
             return {"error": f"Drone {drone_id} not found"}
+        
+        drone = self.drones[drone_id]
+        drone.current_reason = reason
         
         # Clear previous assignment
         for s in self.sectors.values():
@@ -282,32 +297,57 @@ class SimulationEngine:
         
         self.sectors[sector_id]["assigned_to"] = drone_id
         self.sectors[sector_id]["status"] = "assigned"
-        self.log(f"STATE: {drone_id} target set to {sector_id}")
+        log_msg = f"STATE: {drone_id} target set to {sector_id}"
+        if reason:
+            log_msg += f" | REASON: {reason}"
+        self.log(log_msg)
         return {"status": "success", "drone_id": drone_id, "target": sector_id}
 
     def get_world_state(self):
         """Returns the complete ground truth of the simulation."""
+        self._update_wind()
         import time
         elapsed = time.time() - self.start_time
         
+        # Calculate statistics
+        scannable = sum(1 for sid, s in self.sectors.items() if sid not in self.no_fly_sector_ids)
+        scanned = sum(1 for sid, s in self.sectors.items() if s["scanned"] and sid not in self.no_fly_sector_ids)
+        found = len(self.discovered_survivors)
+        total_needed = len(self.survivors)
+
+        # Update mission status
+        if self.mission_status == "active":
+            # Success: All scannable sectors are scanned
+            # (Optionally: or all survivors found)
+            if scannable > 0 and scanned >= scannable:
+                self.mission_status = "success"
+                self.log(f"Mission Complete: All {scannable} scannable sectors cleared.")
+
         drones_state = {}
         for did in self.drones:
             drones_state[did] = self.get_drone_status(did)
             
         return {
+            "mission_status": self.mission_status,
+            "mission_complete": self.mission_status in ["success", "failure"],
             "elapsed_seconds": round(elapsed, 1),
+            "found_survivors": found,
+            "total_survivors": total_needed,
+            "sectors_scanned": scanned,
+            "total_scannable_sectors": scannable,
             "drones": drones_state,
             "sectors": self.sectors,
             "discovered_survivors": self.discovered_survivors,
+            "all_survivors": [s["pos"] for s in self.survivors],
             "wind": self.wind,
-            "mission_complete": all(s["scanned"] for s in self.sectors.values() if s["hazard"] != "no_fly")
+            "mission_log": self.mission_log[-20:], # Send last 20 events for sync
         }
 
     def move_to(self, drone_id, x, y, z):
         if drone_id not in self.drones:
             return {"error": f"Drone {drone_id} not found"}
         drone = self.drones[drone_id]
-        if drone.status != "active":
+        if drone.status not in ["active", "moving", "scanning"]:
             return {"error": f"Drone {drone_id} is {drone.status}, cannot move"}
 
         # Check if destination is in a no-fly zone
@@ -318,20 +358,25 @@ class SimulationEngine:
 
         # Calculate environmental drain multiplier at current position
         old_coords = drone.coordinates
-        multiplier = self._battery_multiplier_at(old_coords[0], old_coords[2])
+        hazard_mult = self._battery_multiplier_at(old_coords[0], old_coords[2])
+        wind_mult = self._get_wind_multiplier(old_coords, (x, y, z))
+        total_mult = hazard_mult * wind_mult
 
-        # Apply extra drain for hazardous zones
+        # Apply move and calculate total drain
         old_coords = drone.coordinates
         drone.move_to(x, y, z)
         
         # Trigger dynamic hazard discovery
         self._update_discovery(x, z)
 
-        if multiplier > 1.0:
-            # Extra drain on top of movement drain already applied
+        if total_mult > 1.0:
+            # move_to already did base 0.05 drain. We add the rest.
             old_x, old_y, old_z = old_coords
             distance = math.sqrt((x - old_x)**2 + (y - old_y)**2 + (z - old_z)**2)
-            extra_drain = distance * 0.02 * (multiplier - 1)
+            # base_drain = distance * 0.05
+            # actual_drain = base_drain * total_mult
+            # extra_drain = actual_drain - base_drain = base_drain * (total_mult - 1)
+            extra_drain = (distance * 0.05) * (total_mult - 1)
             drone.drain_battery(extra_drain)
 
         hazard_label = ""
@@ -347,7 +392,7 @@ class SimulationEngine:
         if drone_id not in self.drones:
             return {"error": f"Drone {drone_id} not found"}
         drone = self.drones[drone_id]
-        if drone.status != "active":
+        if drone.status not in ["active", "moving", "scanning"]:
             return {"error": f"Drone {drone_id} is {drone.status}, cannot scan"}
 
         # Extra scan cost in fire zones
@@ -420,6 +465,51 @@ class SimulationEngine:
             "sector_layout": "10x10 grid, 20x20 units each",
         }
 
+    def _update_wind(self):
+        """Add slight fluctuations to wind direction and speed."""
+        import random
+        # Jitter angle by ±2 degrees
+        self.wind["angle_deg"] = (self.wind["angle_deg"] + random.uniform(-2, 2)) % 360
+        # Jitter speed by ±1 kmh, capped between 20 and 50
+        self.wind["speed_kmh"] = max(20, min(50, self.wind["speed_kmh"] + random.uniform(-1, 1)))
+        
+        # Update description for the agent
+        angle = self.wind["angle_deg"]
+        dirs = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"]
+        dir_idx = int((angle + 22.5) / 45) % 8
+        self.wind["description"] = f"Wind blowing {self.wind['speed_kmh']:.1f} km/h towards {dirs[dir_idx]} ({angle:.1f}°)"
+
+    def _get_wind_vector(self):
+        """Convert wind angle (towards) to a normalized 2D vector (wx, wz)."""
+        rad = math.radians(self.wind["angle_deg"])
+        # In our coordinate system: 0° is North (-Z), 90° is East (+X)
+        # So: x = sin(rad), z = -cos(rad)
+        return math.sin(rad), -math.cos(rad)
+
+    def _get_wind_multiplier(self, old_pos, new_pos):
+        """Calculate battery multiplier based on flight direction vs wind direction."""
+        dx = new_pos[0] - old_pos[0]
+        dz = new_pos[2] - old_pos[2]
+        dist = math.sqrt(dx*dx + dz*dz)
+        if dist < 0.1:
+            return 1.0
+        
+        # Normalized movement vector
+        mx, mz = dx/dist, dz/dist
+        # Wind vector (direction wind is blowing TOWARDS)
+        wx, wz = self._get_wind_vector()
+        
+        # Dot product: 1.0 if flying SAME direction as wind, -1.0 if AGAINST
+        # Dot product = mx*wx + mz*wz
+        dot = mx*wx + mz*wz
+        
+        # We want multiplier 1.3 when AGAINST (-1.0), and 1.0 when WITH (1.0)
+        # linear interpolation: 1.15 - 0.15 * dot
+        # If dot = -1 (against), 1.15 - (-0.15) = 1.3
+        # If dot = 1 (with), 1.15 - 0.15 = 1.0
+        multiplier = 1.15 - 0.15 * dot
+        return max(1.0, multiplier)
+
     def get_hazard_map(self):
         """Return a per-sector hazard map."""
         hazard_map = {}
@@ -457,11 +547,11 @@ class SimulationEngine:
         drone = self.drones[drone_id]
         sector = self.sectors[sector_id]
 
-        if drone.status not in ["active", "scanning"]:
+        if drone.status not in ["active", "moving", "scanning"]:
             return {"error": f"Drone {drone_id} is {drone.status}, cannot scan sector"}
 
-        cx, cy = sector["center"]
-        move_result = self.move_to(drone_id, cx, cy, 5)
+        cx, cz = sector["center"]
+        move_result = self.move_to(drone_id, cx, 5, cz) # elevation 5, horizontal cz
         if "error" in move_result:
             return move_result
 
@@ -470,7 +560,7 @@ class SimulationEngine:
             return scan_result
 
         # Discovery also happens on scan
-        self._update_discovery(cx, cy)
+        self._update_discovery(cx, cz)
 
         sector["scanned"] = True
         sector["assigned_to"] = drone_id
@@ -478,12 +568,12 @@ class SimulationEngine:
 
         hazard = sector["hazard"]
         hazard_label = f" [{hazard.upper()}]" if hazard != "clear" else ""
-        self.log(f"{drone_id} scanned sector {sector_id}{hazard_label} at ({cx},{cy}). Found {scan_result['detected_count']} survivors.")
+        self.log(f"{drone_id} scanned sector {sector_id}{hazard_label} at ({cx},{cz}). Found {scan_result['detected_count']} survivors.")
 
         return {
             "drone": drone_id,
             "sector": sector_id,
-            "sector_center": [cx, cy],
+            "sector_center": [cx, cz],
             "hazard": hazard,
             "survivors_found": scan_result["detected"],
             "battery_after": scan_result["battery_after"],
