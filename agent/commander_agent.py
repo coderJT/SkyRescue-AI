@@ -184,8 +184,8 @@ STRICT JSON FORMAT:
                 assignments = data.get("assignments", {})
                 reasoning = data.get("reasoning", "Coordinated dispatch.")
                 
-                with open("/tmp/commander_debug.log", "a") as f:
-                    f.write(f"[{len(idle_drone_ids)} IDLE] {idle_drone_ids} -> Assigns: {assignments}\n")
+                # with open("/tmp/commander_debug.log", "a") as f:
+                #     f.write(f"[{len(idle_drone_ids)} IDLE] {idle_drone_ids} -> Assigns: {assignments}\n")
                 
                 print(f"📝 Plan: {reasoning}")
                 
