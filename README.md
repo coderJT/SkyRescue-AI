@@ -176,27 +176,20 @@ python start.py
 
 ### 3. Deploy the Autonomous Commander (Terminal 2)
 
-Once the simulation is running and the "START SIMULATION" button has been clicked in the UI, launch the agent to take control of the swarm.
+Once the simulation is running, launch the agent to take control of the swarm.
 
 ```bash
 # Run the autonomous brain
-python agent/commander_agent.py
+python agent/orchestrator.py
 ```
-
-### 4. Watch the Mission
-
-1. **In the Browser**: Click **"▶ Start Simulation"**.
-2. **In the Terminal**: Watch the LLM's **Chain-of-Thought** as it calculates distance-aware assignments.
-3. **Optimized Logic**: Drones will now automatically prioritize high-risk zones (Fire/Smoke) and assign the closest available units to minimize battery consumption.
-
 
 ### 4. Run the Mission
 
 1. **Configure** — Set survivor count (1–15), drone count (1–5), and mission goal
 2. **Click "▶ Start Simulation"** — Drones deploy immediately
 3. **Toggle Brain Mode** — Click `🧠 Brain: Local` to switch to `🧠 Brain: LLM` for AI-powered decisions
-4. **Watch** — Use camera buttons or keys `0-7` to follow individual drones or view the swarm
-5. **Monitor** — Chain-of-Thought panel shows real-time reasoning; toggle MCP to see protocol messages
+4. **Watch in Browser** — Use camera buttons or keys `0-7` to follow individual drones or view the swarm
+5. **Monitor Terminal** — Watch the LLM's **Chain-of-Thought** and explicit fleet-wide ETA analysis in the terminal.
 
 ### 5. (Optional) MCP Inspector
 
