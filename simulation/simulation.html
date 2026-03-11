@@ -1367,8 +1367,7 @@
             const h = hazardOf(r, c);
             const cx0 = c * CELL, cz0 = r * CELL;
             let treeCount;
-            if (h === 'no_fly') treeCount = 5 + Math.floor(Math.random() * 3);
-            else if (h === 'smoke') treeCount = 1 + Math.floor(Math.random() * 2);
+            if (h === 'smoke') treeCount = 1 + Math.floor(Math.random() * 2);
             else if (h === 'fire') treeCount = 1 + Math.floor(Math.random() * 1);
             else treeCount = 1 + Math.floor(Math.random() * 2);
 
@@ -1426,23 +1425,7 @@
             scene.add(mesh);
         }
 
-        // ─── NO-FLY ZONE EXTRA OBSTACLES (rocks/boulders) ───
-        for (const key of NO_FLY) {
-            const [r, c] = key.split("_").map(Number);
-            const cx = c * CELL + CELL / 2, cz = r * CELL + CELL / 2;
-            // Add rocks in some no-fly sub-sectors
-            if (c >= 2 && c <= 3) {
-                for (let i = 0; i < 3; i++) {
-                    const w = 2 + Math.random() * 4, h = 4 + Math.random() * 8, dd = 2 + Math.random() * 4;
-                    const rock = new THREE.Mesh(new THREE.BoxGeometry(w, h, dd), new THREE.MeshStandardMaterial({ color: 0x444433, roughness: 0.95 }));
-                    const rx = cx - 6 + Math.random() * 12, rz = cz - 6 + Math.random() * 12;
-                    rock.position.set(rx, h / 2, rz);
-                    rock.rotation.set(Math.random() * 0.2, Math.random() * Math.PI, Math.random() * 0.2);
-                    scene.add(rock);
-                    registerObstacle(rx, rz, Math.max(w, dd) / 2 + 0.5, h);
-                }
-            }
-        }
+
 
         function spawnHouse(cx, cz, isSurvivorShed = false) {
             const houseG = new THREE.Group();
