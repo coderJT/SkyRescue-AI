@@ -41,9 +41,9 @@ class Drone:
         """
         self.status = status
 
-    def thermal_scan(self, survivors, radius=14.5):
+    def thermal_scan(self, survivors, radius=18.0):
         """
-        Use thermal scanner to detect heat signatures within a radius (default 14.5).
+        Use thermal scanner to detect heat signatures within a radius (default 18.0).
         Costs 1.0% battery per scan.
         TODO: Here, we will implement a binary classification machine learning model to simulate a drone performing thermal scanning.
         """

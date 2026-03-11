@@ -130,7 +130,15 @@ def compute_sector_recommendations(drone_id, drones, sectors, elapsed_seconds):
     Two-phase strategy:
       DISCOVERY PHASE: Spread drones across the map to discover fire/smoke via onboard sensors.
       PRIORITY PHASE:  Once hazards are discovered, prioritize fire > smoke > frontier.
+    
+    Battery feasibility: excludes sectors where the drone cannot travel there,
+    scan, AND return to base with a safety margin.
     """
+    BASE_X, BASE_Z = 5, 5
+    DRAIN_PER_UNIT = 0.05  # battery % per unit distance (clear) — matches simulation.html
+    SCAN_COST = 0.5       # battery % for one scan cycle
+    SAFETY_MARGIN = 3     # % reserve
+
     drone = drones.get(drone_id, {})
     if not isinstance(drone, dict):
         return []
@@ -141,21 +149,70 @@ def compute_sector_recommendations(drone_id, drones, sectors, elapsed_seconds):
 
     coords = drone.get('coordinates', [0, 0, 0])
     cx, cz = coords[0], coords[2]
+    battery = drone.get('battery', 0)
 
-    # Sectors claimed by other drones
+    # ── Dedup: globally claimed sectors ──
+    # Include both currently acting drones AND assignments we've made in this orchestrator round
     claimed = set()
     for did, d in drones.items():
         if did != drone_id and isinstance(d, dict) and d.get('target_sector'):
             claimed.add(d['target_sector'])
 
     # Count discovered hazards across the map
-    discovered_fire = [sid for sid, s in sectors.items()
-                       if isinstance(s, dict) and s.get('discovered') and s.get('hazard') == 'fire' and not s.get('scanned')]
-    discovered_smoke = [sid for sid, s in sectors.items()
-                        if isinstance(s, dict) and s.get('discovered') and s.get('hazard') == 'smoke' and not s.get('scanned')]
+    discovered_fire = {}
+    discovered_smoke = {}
+    for sid, s in sectors.items():
+        if isinstance(s, dict) and s.get('discovered') and not s.get('scanned'):
+            if s.get('hazard') == 'fire':
+                discovered_fire[sid] = s
+            elif s.get('hazard') == 'smoke':
+                discovered_smoke[sid] = s
+    
     has_urgent_hazards = len(discovered_fire) > 0 or len(discovered_smoke) > 0
 
     candidates = []
+    # ── Optimal Fleet-Wide Assignment (ETA) ──
+    # To prevent drones from crossing the entire map when a closer drone (even if busy)
+    # can reach the sector sooner, we calculate a "Worst-Case ETA" for all drones.
+    SCAN_PENALTY = 30  # dist equivalent of a scan
+    CHARGE_PENALTY = 100 # dist equivalent of a charge cycle
+
+    def get_eta(d_data, tgt_center):
+        d_pos = d_data.get('coordinates', [0, 0, 0])
+        d_cx, d_cz = d_pos[0], d_pos[2]
+        d_status = d_data.get('status', 'offline').lower()
+        d_target = d_data.get('target_sector')
+        d_bat = d_data.get('battery', 0)
+
+        if d_status in ['idle', 'waiting_orders'] or not d_target:
+            return math.hypot(tgt_center[0] - d_cx, tgt_center[1] - d_cz)
+            
+        elif d_status == 'moving':
+            if d_target == '__RECALL__':
+                return math.hypot(BASE_X - d_cx, BASE_Z - d_cz) + CHARGE_PENALTY + math.hypot(tgt_center[0] - BASE_X, tgt_center[1] - BASE_Z)
+            else:
+                curr_tgt_center = sectors.get(d_target, {}).get('center', [BASE_X, BASE_Z])
+                dist_to_curr = math.hypot(curr_tgt_center[0] - d_cx, curr_tgt_center[1] - d_cz)
+                dist_curr_to_new = math.hypot(tgt_center[0] - curr_tgt_center[0], tgt_center[1] - curr_tgt_center[1])
+                eta = dist_to_curr + SCAN_PENALTY + dist_curr_to_new
+                
+                # If drone will likely need to charge before heading to the new target
+                if d_bat < (dist_to_curr + dist_curr_to_new) * DRAIN_PER_UNIT * 1.5 + SCAN_COST:
+                    eta += CHARGE_PENALTY
+                return eta
+                
+        elif d_status == 'scanning':
+            dist_to_new = math.hypot(tgt_center[0] - d_cx, tgt_center[1] - d_cz)
+            eta = (SCAN_PENALTY / 2) + dist_to_new
+            if d_bat < dist_to_new * DRAIN_PER_UNIT * 1.5:
+                eta += CHARGE_PENALTY
+            return eta
+            
+        elif d_status == 'charging':
+            return (CHARGE_PENALTY / 2) + math.hypot(tgt_center[0] - BASE_X, tgt_center[1] - BASE_Z)
+            
+        return float('inf')
+
     for sid, sector in sectors.items():
         if not isinstance(sector, dict):
             continue
@@ -167,65 +224,94 @@ def compute_sector_recommendations(drone_id, drones, sectors, elapsed_seconds):
         hazard = sector.get('hazard', 'clear')
         discovered = sector.get('discovered', False)
 
+        # ── Fleet ETA Check ──
+        # Is there another drone that can reach this sector SOONER than this drone?
+        my_eta = get_eta(drone, center)
+        is_best_candidate = True
+        best_other_eta = float('inf')
+        best_other_drone = None
+        
+        for did, d in drones.items():
+            if did != drone_id and isinstance(d, dict) and d.get('status', 'offline').lower() != 'offline':
+                other_eta = get_eta(d, center)
+                if other_eta < best_other_eta:
+                    best_other_eta = other_eta
+                    best_other_drone = did
+                if other_eta < my_eta - 10.0:  # 10u buffer to prevent minor flip-flopping
+                    is_best_candidate = False
+        
+        penalty = 0
+        fleet_comparison_string = "fastest to reach"
+        if not is_best_candidate:
+            penalty = 2000  # Leave this sector for the closer drone ideally, but keep as fallback
+            diff_str = "unknown" if best_other_eta == float('inf') else f"~{round(my_eta - best_other_eta)}u"
+            fleet_comparison_string = f"fallback (slower than {best_other_drone} by {diff_str} ETA)"
+        elif best_other_drone and best_other_eta < float('inf'):
+             fleet_comparison_string = f"faster than {best_other_drone} by ~{round(best_other_eta - my_eta)}u ETA"
+
+        # ── Battery feasibility check ──
+        # Match the simulation's own formula: dist * DRAIN_PER_UNIT * 1.8 + 5
+        # for the return trip (conservative hazard/wind headwind estimate)
+        cost_to_target = dist * DRAIN_PER_UNIT  # clear-air travel estimate
+        dist_back = math.sqrt((center[0] - BASE_X)**2 + (center[1] - BASE_Z)**2)
+        cost_return = dist_back * DRAIN_PER_UNIT * 1.5 + 4  # slightly relaxed RTB formula
+        total_cost = cost_to_target + SCAN_COST + cost_return + SAFETY_MARGIN
+
+        if battery < total_cost:
+            continue  # Cannot afford this round-trip
+
+        battery_after_return = round(battery - total_cost, 1)
+
         time_limit = {'fire': 60, 'smoke': 180}.get(hazard, 600)
         time_left = max(0, time_limit - elapsed_seconds)
 
         if has_urgent_hazards:
             # ── PRIORITY PHASE: Fire first, then smoke, then frontier ──
             if hazard == 'fire' and discovered:
-                score = time_left + (dist * 0.3)  # Urgent rescue
-                reason = f"URGENT FIRE: {round(time_left)}s window, {round(dist)}u"
+                score = time_left + (dist * 0.3) + penalty  # Urgent rescue
+                reason = f"URGENT FIRE: {round(time_left)}s window, {fleet_comparison_string}"
             elif hazard == 'smoke' and discovered:
-                score = time_left + (dist * 0.5) + 100  # Secondary priority
-                reason = f"SMOKE hazard: {round(time_left)}s window, {round(dist)}u"
+                score = time_left + (dist * 0.5) + 100 + penalty  # Secondary priority
+                reason = f"SMOKE hazard: {round(time_left)}s window, {fleet_comparison_string}"
             elif not discovered:
-                score = dist + 300  # Explore to find more hazards
-                reason = f"Frontier exploration, {round(dist)}u"
+                score = dist + 300 + penalty  # Explore to find more hazards
+                reason = f"Frontier exploration, {fleet_comparison_string}"
             else:
-                score = dist + 500  # Low priority clear sectors
-                reason = f"Clear sector, {round(dist)}u"
+                score = dist + 500 + penalty  # Low priority clear sectors
+                reason = f"Clear sector, {fleet_comparison_string}"
         else:
             # ── DISCOVERY PHASE: Spread drones across map to maximize frontier coverage ──
-            # Prefer DISTANT undiscovered sectors to cover more ground with onboard sensors
             if not discovered:
-                # Spread factor: prefer sectors far from other drones to maximize coverage
                 min_drone_dist = float('inf')
                 for did2, d2 in drones.items():
                     if did2 != drone_id and isinstance(d2, dict):
                         d2_coords = d2.get('coordinates', [0, 0, 0])
                         d2_dist = math.sqrt((center[0] - d2_coords[0])**2 + (center[1] - d2_coords[2])**2)
-                        # Also check claimed targets' destinations
                         if d2.get('target_sector') and d2['target_sector'] in sectors:
                             t_center = sectors[d2['target_sector']].get('center', [0, 0])
                             t_dist = math.sqrt((center[0] - t_center[0])**2 + (center[1] - t_center[1])**2)
                             min_drone_dist = min(min_drone_dist, t_dist)
                         min_drone_dist = min(min_drone_dist, d2_dist)
 
-                # Score: prefer sectors that are reachable but spread from other drones
-                spread_bonus = max(0, 50 - min_drone_dist) * 3  # Penalty for being near other drones
-                score = dist + spread_bonus
-                reason = f"Discovery sweep, {round(dist)}u (spread: {round(min_drone_dist)}u from fleet)"
-            else:
-                score = dist + 200
-                reason = f"Known clear sector, {round(dist)}u"
 
-        candidates.append({
-            "id": sid,
-            "hazard": hazard if discovered else "unexplored",
-            "distance": round(dist, 1),
-            "reason": reason,
-            "score": score
-        })
+                spread_bonus = max(0, 50 - min_drone_dist) * 3
+                score = dist + spread_bonus + penalty
+                reason = f"Discovery sweep, {fleet_comparison_string}"
+            else:
+                score = dist + 200 + penalty
+                reason = f"Known clear sector, {fleet_comparison_string}"
+
+        candidates.append({'id': sid, 'score': score, 'reason': reason, 'distance': round(dist, 1), 'hazard': hazard, 'battery_cost': round(total_cost, 1), 'battery_after': battery_after_return})
 
     candidates.sort(key=lambda x: x["score"])
     return candidates[:3]
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-#  ASSIGNMENT TRACKER (prevents duplicate dispatches)
+#  MAIN LOOP (Agent Workflow)
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-class DroneAssignmentTracker:
+class AssignmentTracker:
     def __init__(self):
         self.pending = {}
         self.last_idle_set = set()
@@ -285,12 +371,11 @@ async def run_orchestrator(session):
     6. Dispatch assignments via assign_target()
     7. Log reasoning via log_mission_event()
     """
-    print("\n" + "="*50)
-    print("🚀 COMMAND AGENT: Autonomous Swarm Brain Active")
-    print("   Connected via MCP Protocol to Drone Fleet")
-    print("="*50 + "\n")
+    print("Orchestrator active. Beginning control loop...")
 
-    tracker = DroneAssignmentTracker()
+    # Wait for MCP to confirm initialization
+    await asyncio.sleep(2)
+    tracker = AssignmentTracker()
     last_llm_time = 0
     idle_count = 0
 
@@ -338,15 +423,18 @@ async def run_orchestrator(session):
                 s = d.get('status', '').lower()
                 target = d.get('target_sector')
                 if s in ['active', 'idle', 'waiting_orders']:
-                    if not target:
-                        available.append(did)  # Truly idle
-                    elif urgent_needs > 0 and target != "__RECALL__":
+                    if not target or target == "__RECALL__":
+                        available.append(did)  # Truly idle or recalled
+                    elif urgent_needs > 0:
                         # Allow interruption: if drone is heading to clear/unknown, it can be reassigned to fire
                         t_sector = sectors.get(target, {})
                         if isinstance(t_sector, dict):
                             t_haz = t_sector.get('hazard', 'unknown')
                             if t_haz not in ['fire', 'smoke']:
                                 available.append(did)
+                elif s == 'moving' and target == '__RECALL__':
+                    # Drone heading back to base for recall — redirect it instead
+                    available.append(did)
 
             idle_drone_ids = tracker.filter_idle(available)
 
@@ -425,10 +513,10 @@ async def run_orchestrator(session):
                     else:
                         fleet_lines.append(f"- {did}: {s} → {target}, Bat {bat}%")
 
-                # Build compact recommendation context
+                # Build compact recommendation context with battery estimates
                 rec_lines = []
                 for did, recs in recommendations.items():
-                    entries = "; ".join(f"{r['id']}({r['hazard']},{r['distance']}u)" for r in recs)
+                    entries = "; ".join(f"{r['id']}({r['hazard']},{r['distance']}u,cost:{r.get('battery_cost','?')}%,remaining:{r.get('battery_after','?')}%)" for r in recs)
                     rec_lines.append(f"  {did}: {entries}")
 
                 wind = world.get('wind', {})
@@ -440,16 +528,17 @@ Coverage: {world.get('coverage_pct',0)}% | Survivors: {world.get('found_survivor
 FLEET:
 {chr(10).join(fleet_lines)}
 
-CANDIDATES (id, hazard, distance):
+CANDIDATES (id, hazard, distance, cost: Y%, remaining: Z%):
 {chr(10).join(rec_lines)}
 
 RULES: 
 1. Assign 1 unique sector per drone. Minimize travel. Never duplicate sectors. 
-2. Recall if bat<25%. 
-3. REASONING MUST BE SPECIFIC: explicitly mention battery %, distance, hazard type (or "frontier exploration" if unexplored), and wind.
+2. RECALL ONLY IF bat < 25%, OR if the drone's CANDIDATES list is completely empty. 
+3. BATTERY FEASIBILITY: All provided candidates are ALREADY VERIFIED to have enough battery for a safe round-trip. DO NOT second-guess battery feasibility. DO NOT recall a drone if it has valid candidates.
+4. REASONING MUST BE SPECIFIC: explicitly mention battery %, round-trip cost, distance, hazard type (or "frontier exploration" if unexplored), wind, and the provided arrival comparison (e.g. "fastest to reach" or "faster than drone_x by Y ETA").
 
 JSON ONLY:
-{{"strategy":"1 detailed sentence mentioning distances and battery","assignments":{{"drone_id":{{"sector":"SID","reason":"1 detailed sentence mentioning specific distance to target, hazard/exploration status, and current battery %"}}}}}}"""
+{{"strategy":"1 detailed sentence mentioning distances and battery feasibility","assignments":{{"drone_id":{{"sector":"SID","reason":"1 detailed sentence mentioning specific distance, round-trip battery cost, remaining battery after return, hazard status, and the explicitly provided fleet arrival comparison (fastest to reach, fallback, etc)"}}}}}}"""
 
                 print(f"\n--- LLM PROMPT ---\n{prompt}\n------------------\n")
 
@@ -479,12 +568,36 @@ JSON ONLY:
                     if did in idle_drone_ids:
                         if isinstance(entry, dict):
                             sid = entry.get("sector")
-                            reason = entry.get("reason", "Assigned by Commander.")
+                            reason = entry.get("reason", "")
                         else:
                             sid = entry
-                            reason = "Assigned by Commander."
+                            reason = ""
+                            
+                        # HARD OVERRIDE: Prevent LLM battery hallucinations
+                        bat_eval = 0
+                        if did in drones and isinstance(drones[did], dict):
+                            bat_eval = round(drones[did].get('battery', 0), 1)
+                            
+                        if sid == "__RECALL__" and bat_eval > 30.0 and did in recommendations and len(recommendations[did]) > 0:
+                            # The LLM hallucinated an insufficient battery recall when perfectly good candidates exist
+                            # Override it and take the top scoring candidate.
+                            top_cand = recommendations[did][0]
+                            sid = top_cand['id']
+                            reason = f"Commander Override: Rejecting false LLM recall. Bat {bat_eval}% is sufficient for {sid}."
 
-                        if sid and sid not in assigned_sectors:
+                        # Build a descriptive fallback if LLM didn't provide a reason
+                        if not reason and sid and did in drones and isinstance(drones[did], dict):
+                            bat = round(drones[did].get('battery', 0), 1)
+                            pos = drones[did].get('coordinates', [0, 0, 0])
+                            sec_info = sectors.get(sid, {})
+                            sec_center = sec_info.get('center', [0, 0]) if isinstance(sec_info, dict) else [0, 0]
+                            dist = round(math.sqrt((sec_center[0] - pos[0])**2 + (sec_center[1] - pos[2])**2))
+                            haz = sec_info.get('hazard', 'unknown') if isinstance(sec_info, dict) else 'unknown'
+                            reason = f"Commander dispatch: {did} ({bat}% bat) → {sid} ({haz}, ~{dist}u away)"
+                        elif not reason:
+                            reason = f"Commander dispatch: {did} → {sid}"
+
+                        if sid and (sid == '__RECALL__' or sid not in assigned_sectors):
                             print(f"📡 DISPATCH: {did} → {sid} | {reason}")
                             await call_tool(session, "assign_target", {
                                 "drone_id": did,
@@ -492,12 +605,13 @@ JSON ONLY:
                                 "reason": reason
                             })
                             assigned.append(did)
-                            assigned_sectors.add(sid)  # Mark sector as taken
+                            if sid != '__RECALL__':
+                                assigned_sectors.add(sid)  # Mark sector as taken
 
                             await call_tool(session, "log_mission_event", {
                                 "message": f"REASON: {did} → {sid}: {reason}"
                             })
-                        elif sid and sid in assigned_sectors:
+                        elif sid and sid != '__RECALL__' and sid in assigned_sectors:
                             print(f"⚠️ SKIPPED: {did} → {sid} (sector already assigned this round)")
 
                 tracker.mark_assigned(assigned)

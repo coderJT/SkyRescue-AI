@@ -668,28 +668,23 @@
                     style="margin-top: 8px; font-size: 10px; padding: 4px; background: rgba(0,0,0,0.3); border-radius: 4px; border: 1px solid rgba(255,255,255,0.1); margin-bottom: 8px;">
                     <div style="display:flex; justify-content:space-between;">
                         <span><span id="llm-dot" style="color:#ff3333">●</span> API: MCP Server</span>
-                        <span title="MCP is mocked successfully in browser context"><span id="mcp-dot"
-                                style="color:#33ff33">●</span> SYS: MCP Link</span>
                     </div>
                 </div>
                 <div id="speed-slider-box">
                     <label>⚡ Speed</label>
-                    <input type="range" id="speed-slider" min="5" max="100" value="20"
+                    <input type="range" id="speed-slider" min="5" max="50" value="20"
                         oninput="updateSpeed(this.value)">
                     <span id="speed-val">0.20</span>
                     <button id="pause-btn" onclick="togglePause()"
                         style="background:rgba(255,200,50,0.15);border-color:rgba(255,200,50,0.3);color:#ffd855; padding:3px 10px; border-radius:4px; font-size:10px; cursor:pointer; pointer-events:auto; border-width:1px; border-style:solid; transition:all 0.2s;">⏸
-                        Pause</button>
+                        Pause [P]</button>
                     <button id="scan-toggle-btn" onclick="toggleScannedSectors()"
                         style="background:rgba(50,150,255,0.15);border-color:rgba(50,150,255,0.3);color:#66bbff; padding:3px 10px; border-radius:4px; font-size:10px; cursor:pointer; pointer-events:auto; border-width:1px; border-style:solid; transition:all 0.2s;">👁
                         Scanned (H)</button>
-                    <button id="brain-btn" onclick="toggleBrain()"
-                        style="background:rgba(180,50,255,0.15);border-color:rgba(180,50,255,0.3);color:#d888ff; padding:3px 10px; border-radius:4px; font-size:10px; cursor:pointer; pointer-events:auto; border-width:1px; border-style:solid; transition:all 0.2s;">🧠
-                        Brain: Local</button>
-                    <button id="daynight-btn" onclick="toggleDayNight()">🌙 Night</button>
+                    <button id="daynight-btn" onclick="toggleDayNight()">🌙 Night [N]</button>
                     <button id="daynight-btn" onclick="location.reload()"
                         style="background:rgba(255,50,50,0.15);border-color:rgba(255,50,50,0.3);color:#ff6655">↻
-                        Restart</button>
+                        Restart [R]</button>
                 </div>
             </div>
         </div>
@@ -722,9 +717,6 @@
                 </select>
             </div>
             <button id="start-btn" onclick="startMission()">START SIMULATION</button>
-            <button id="god-mode-btn" onclick="revealAllHazards()"
-                style="background:#500; border:1px solid #f00; margin-left:10px; cursor:pointer; font-weight:bold; color:white; border-radius:5px; padding:5px 10px;">GOD
-                MODE: REVEAL FIRE</button>
         </div>
 
         <div id="success-modal">
@@ -752,7 +744,7 @@
 
         // ─── CONFIG ───
         const GRID = 200, SECTORS = 10, CELL = GRID / SECTORS;  // 10×10 = each sub-tile is 20×20
-        const SCAN_RADIUS = 14.5; // Enough to radius-cover a 20x20 cell (sqrt(10^2+10^2) ≈ 14.14)
+        const SCAN_RADIUS = 18.0; // Expanded to fully cover 20x20 cell corners (need at least ~14.14, using 18.0 for safety)
 
         let isPaused = false;
         let pauseStartTime = 0;
@@ -819,25 +811,7 @@
             }
         };
 
-        let useLLM = true;
-        window.toggleBrain = function () {
-            useLLM = !useLLM;
-            const btn = document.getElementById('brain-btn');
-            if (btn) {
-                btn.innerHTML = useLLM ? '🧠 Brain: LLM' : '🧠 Brain: Local';
-                btn.style.color = useLLM ? '#ff88ff' : '#d888ff';
-                btn.style.background = useLLM ? 'rgba(255,50,255,0.3)' : 'rgba(180,50,255,0.15)';
-            }
-        };
-
-        window.addEventListener('DOMContentLoaded', () => {
-            const btn = document.getElementById('brain-btn');
-            if (btn) {
-                btn.innerHTML = useLLM ? '🧠 Brain: LLM' : '🧠 Brain: Local';
-                btn.style.color = useLLM ? '#ff88ff' : '#d888ff';
-                btn.style.background = useLLM ? 'rgba(255,50,255,0.3)' : 'rgba(180,50,255,0.15)';
-            }
-        });
+        const useLLM = true;
 
         const DRAIN_PER_UNIT = 0.05; // battery % drained per unit of distance traveled (clear zone)
         const DRONE_FLY_HEIGHT = 6;
@@ -1208,6 +1182,42 @@
         const hemiLight = new THREE.HemisphereLight(0x112233, 0x221100, 0.25);
         scene.add(hemiLight);
 
+        // Sun & Moon meshes with lighting effects (glow & emitted light)
+        const sunGlow = new THREE.PointLight(0xffaa00, 2, 300);
+        const sunMesh = new THREE.Mesh(
+            new THREE.SphereGeometry(15, 32, 32), 
+            new THREE.MeshBasicMaterial({ color: 0xffffee, transparent: true, opacity: 0.9 })
+        );
+        // Outer halo for sun
+        const sunHalo = new THREE.Mesh(
+            new THREE.SphereGeometry(18, 32, 32),
+            new THREE.MeshBasicMaterial({ color: 0xffaa00, transparent: true, opacity: 0.3, blending: THREE.AdditiveBlending })
+        );
+        sunMesh.add(sunHalo);
+        sunMesh.add(sunGlow);
+        sunMesh.position.set(120, 100, -80);
+        sunMesh.visible = false;
+        scene.add(sunMesh);
+
+        // Sync directional light with sun position
+        sun.position.copy(sunMesh.position);
+
+        const moonGlow = new THREE.PointLight(0x88aaff, 1.5, 200);
+        const moonMesh = new THREE.Mesh(
+            new THREE.SphereGeometry(12, 32, 32), 
+            new THREE.MeshBasicMaterial({ color: 0xccddff })
+        );
+        // Outer halo for moon
+        const moonHalo = new THREE.Mesh(
+            new THREE.SphereGeometry(14, 32, 32),
+            new THREE.MeshBasicMaterial({ color: 0x6688ff, transparent: true, opacity: 0.2, blending: THREE.AdditiveBlending })
+        );
+        moonMesh.add(moonHalo);
+        moonMesh.add(moonGlow);
+        moonMesh.position.set(80, 100, -60);
+        moonMesh.visible = true;
+        scene.add(moonMesh);
+
         let isNight = true;
         window.toggleDayNight = function () {
             isNight = !isNight;
@@ -1218,14 +1228,18 @@
                 ambientLight.intensity = 0.4;
                 sun.intensity = 0.6;
                 hemiLight.intensity = 0.25;
-                btn.textContent = '🌙 Night';
+                sunMesh.visible = false;
+                moonMesh.visible = true;
+                btn.textContent = '🌙 Night [N]';
             } else {
                 scene.background.setHex(0x87CEEB);
                 scene.fog.color.setHex(0x87CEEB);
                 ambientLight.intensity = 1.2;
                 sun.intensity = 1.4;
                 hemiLight.intensity = 0.8;
-                btn.textContent = '☀️ Day';
+                sunMesh.visible = true;
+                moonMesh.visible = false;
+                btn.textContent = '☀️ Day [N]';
             }
         };
 
@@ -1507,20 +1521,47 @@
             smokePlanes.push({ mesh: p, phase: Math.random() * 6.28 });
         }
 
-        // ─── FIRE EFFECTS ───
+        // ─── FIRE EFFECTS (enhanced) ───
         function spawnFireAt(sid) {
             const sm = sectorMeshes[sid];
             if (!sm) return;
             const { r, c } = sm;
             const cx = c * CELL + CELL / 2, cz = r * CELL + CELL / 2;
+            // Flame cones — varied sizes (reduced count for perf)
             for (let i = 0; i < 6; i++) {
+                const h = 1.5 + Math.random() * 5;
+                const rad = 0.2 + Math.random() * 1.0;
                 const flame = new THREE.Mesh(
-                    new THREE.ConeGeometry(0.3 + Math.random() * 0.8, 1.5 + Math.random() * 4, 5),
-                    new THREE.MeshBasicMaterial({ color: new THREE.Color().setHSL(0.04 + Math.random() * 0.06, 1, 0.45 + Math.random() * 0.15), transparent: true, opacity: 0.75 })
+                    new THREE.ConeGeometry(rad, h, 4),
+                    new THREE.MeshBasicMaterial({
+                        color: new THREE.Color().setHSL(0.02 + Math.random() * 0.08, 1, 0.4 + Math.random() * 0.2),
+                        transparent: true, opacity: 0.7 + Math.random() * 0.2
+                    })
                 );
-                flame.position.set(cx - CELL / 2 + Math.random() * CELL, 0.5 + Math.random() * 2, cz - CELL / 2 + Math.random() * CELL);
+                flame.position.set(
+                    cx - CELL / 2 + Math.random() * CELL,
+                    0.5 + Math.random() * 2,
+                    cz - CELL / 2 + Math.random() * CELL
+                );
                 scene.add(flame);
-                fireParticles.push({ mesh: flame, baseY: flame.position.y, speed: 1 + Math.random() * 3, phase: Math.random() * 6.28 });
+                fireParticles.push({ mesh: flame, baseY: flame.position.y, speed: 1.5 + Math.random() * 4, phase: Math.random() * 6.28, type: 'flame' });
+            }
+            // Ember sparks (reduced for perf)
+            for (let i = 0; i < 3; i++) {
+                const ember = new THREE.Mesh(
+                    new THREE.SphereGeometry(0.1, 3, 3),
+                    new THREE.MeshBasicMaterial({
+                        color: new THREE.Color().setHSL(0.05 + Math.random() * 0.05, 1, 0.6),
+                        transparent: true, opacity: 0.9
+                    })
+                );
+                ember.position.set(
+                    cx - CELL / 3 + Math.random() * (CELL * 0.66),
+                    1 + Math.random() * 4,
+                    cz - CELL / 3 + Math.random() * (CELL * 0.66)
+                );
+                scene.add(ember);
+                fireParticles.push({ mesh: ember, baseY: ember.position.y, speed: 2 + Math.random() * 5, phase: Math.random() * 6.28, type: 'ember' });
             }
         }
 
@@ -1529,14 +1570,20 @@
             if (!sm) return;
             const { r, c } = sm;
             const cx = c * CELL + CELL / 2, cz = r * CELL + CELL / 2;
-            for (let layer = 0; layer < 2; layer++) {
+            // Rising smoke puffs (reduced for perf)
+            for (let i = 0; i < 2; i++) {
+                const size = CELL * (0.3 + Math.random() * 0.4);
                 const p = new THREE.Mesh(
-                    new THREE.PlaneGeometry(CELL * 0.9, CELL * 0.9),
-                    new THREE.MeshBasicMaterial({ color: 0x886644, transparent: true, opacity: 0.06, side: THREE.DoubleSide })
+                    new THREE.SphereGeometry(size * 0.3, 6, 6),
+                    new THREE.MeshBasicMaterial({ color: 0x665544, transparent: true, opacity: 0.08, side: THREE.DoubleSide })
                 );
-                p.rotation.x = -Math.PI / 2; p.position.set(cx, 3 + layer * 3, cz);
+                p.position.set(
+                    cx + (Math.random() - 0.5) * CELL * 0.6,
+                    2 + i * 4 + Math.random() * 2,
+                    cz + (Math.random() - 0.5) * CELL * 0.6
+                );
                 scene.add(p);
-                smokePlanes.push({ mesh: p, phase: Math.random() * 6.28 });
+                smokePlanes.push({ mesh: p, phase: Math.random() * 6.28, baseX: p.position.x, baseZ: p.position.z, baseY: p.position.y });
             }
         }
 
@@ -1571,16 +1618,53 @@
         function createDrone(colorHex) {
             const g = new THREE.Group();
             const cHex = parseInt(colorHex.slice(1), 16);
+            // Body — slightly more detailed
             const body = new THREE.Mesh(
                 new THREE.BoxGeometry(1.2, 0.35, 1.2),
                 new THREE.MeshStandardMaterial({ color: cHex, metalness: 0.7, roughness: 0.2, emissive: cHex, emissiveIntensity: 0.3 })
             );
             body.castShadow = false; g.add(body);
-            const rotors = [];
+            // Arms connecting body to rotors
+            const armMat = new THREE.MeshStandardMaterial({ color: 0x222222, metalness: 0.6, roughness: 0.3 });
             for (const [ax, az] of [[1, 1], [-1, 1], [1, -1], [-1, -1]]) {
-                const rotor = new THREE.Mesh(new THREE.CylinderGeometry(0.45, 0.45, 0.03, 10), new THREE.MeshBasicMaterial({ color: 0x88ccff, transparent: true, opacity: 0.35 }));
-                rotor.position.set(ax * 0.9, 0.25, az * 0.9); g.add(rotor); rotors.push(rotor);
+                // Arm strut
+                const arm = new THREE.Mesh(new THREE.BoxGeometry(1.1, 0.06, 0.06), armMat);
+                arm.position.set(ax * 0.5, 0.15, az * 0.5);
+                arm.rotation.y = Math.atan2(az, ax);
+                g.add(arm);
+                // Rotor disc
+                const rotor = new THREE.Mesh(
+                    new THREE.CylinderGeometry(0.45, 0.45, 0.03, 10),
+                    new THREE.MeshBasicMaterial({ color: 0x88ccff, transparent: true, opacity: 0.35 })
+                );
+                rotor.position.set(ax * 0.9, 0.25, az * 0.9);
+                g.add(rotor);
             }
+            // Navigation LED lights (front green, rear red)
+            const ledFront = new THREE.Mesh(
+                new THREE.SphereGeometry(0.06, 6, 6),
+                new THREE.MeshBasicMaterial({ color: 0x00ff00 })
+            );
+            ledFront.position.set(0, 0.05, -0.6);
+            g.add(ledFront);
+            const ledRear = new THREE.Mesh(
+                new THREE.SphereGeometry(0.06, 6, 6),
+                new THREE.MeshBasicMaterial({ color: 0xff0000 })
+            );
+            ledRear.position.set(0, 0.05, 0.6);
+            g.add(ledRear);
+
+            // Observation Radius Visualizer (5 sectors = 100u diameter, 50u radius)
+            const obsRadius = 1 * CELL;
+            const obsRing = new THREE.Mesh(
+                new THREE.TorusGeometry(obsRadius, 0.5, 3, 64),
+                new THREE.MeshBasicMaterial({ color: 0xffeeaa, transparent: true, opacity: 0.15, wireframe: true })
+            );
+            obsRing.rotation.x = -Math.PI / 2;
+            obsRing.position.y = -DRONE_FLY_HEIGHT + 1; // Project slightly above ground
+            g.add(obsRing);
+            g.userData.obsRing = obsRing;
+
             return g;
         }
 
@@ -1613,13 +1697,6 @@
         // NOTE: startMission is defined at the bottom of the file (after syncWithServer)
         // to ensure all dependencies (mcpClient, syncWithServer, etc.) are available.
 
-
-        window.revealAllHazards = async function () {
-            // Fire/smoke are already rendered from ground_truth_hazards via syncWithServer.
-            // This button is kept as a UI element but no longer needs a special MCP call.
-            addThought(-1, 'info', 'Hazard visualization is always active — fire & smoke are visible ground truth.');
-        };
-
         function askLLMForSector(d, i) {
             return;
         }
@@ -1647,12 +1724,16 @@
             }
         };
         document.addEventListener('keydown', e => {
+            if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT') return;
             const k = e.key.toLowerCase();
             if (k === '0') switchCam(-1);
             else if (k >= '1' && k <= '5') switchCam(parseInt(k) - 1);
             else if (k === '6') switchCam(-2);
             else if (k === '7') switchCam(-3);
             else if (k === 'h') toggleScannedSectors();
+            else if (k === 'p') togglePause();
+            else if (k === 'n') toggleDayNight();
+            else if (k === 'r') location.reload();
         });
 
         // Manual Drone Kill Function
@@ -1712,23 +1793,58 @@
 
                 // processBatchQueue(); // Logic moved to Agent
 
-                // Fire animation
+                // Fire animation (enhanced)
                 fireParticles.forEach(f => {
-                    f.mesh.position.y = f.baseY + Math.sin(elapsed * f.speed + f.phase) * 1.8;
-                    f.mesh.scale.setScalar(0.6 + Math.sin(elapsed * f.speed * 2 + f.phase) * 0.4);
-                    f.mesh.material.opacity = 0.35 + Math.sin(elapsed * 3 + f.phase) * 0.35;
+                    if (f.type === 'ember') {
+                        // Embers float upward and drift sideways
+                        f.mesh.position.y = f.baseY + ((elapsed * f.speed + f.phase) % 8);
+                        f.mesh.position.x += Math.sin(elapsed * 2 + f.phase) * 0.01;
+                        f.mesh.material.opacity = Math.max(0, 0.9 - ((elapsed * f.speed + f.phase) % 8) * 0.12);
+                        // Reset when too high
+                        if (f.mesh.position.y > f.baseY + 8) {
+                            f.mesh.position.y = f.baseY;
+                        }
+                    } else if (f.type === 'light') {
+                        // Flickering fire light
+                        f.mesh.intensity = 1.0 + Math.sin(elapsed * f.speed + f.phase) * 0.8 + Math.sin(elapsed * 7 + f.phase) * 0.3;
+                    } else {
+                        // Flame cones — dance and flicker
+                        f.mesh.position.y = f.baseY + Math.sin(elapsed * f.speed + f.phase) * 1.5;
+                        f.mesh.scale.x = 0.7 + Math.sin(elapsed * f.speed * 2 + f.phase) * 0.3;
+                        f.mesh.scale.z = 0.7 + Math.cos(elapsed * f.speed * 1.5 + f.phase) * 0.3;
+                        f.mesh.scale.y = 0.5 + Math.sin(elapsed * f.speed * 2.5 + f.phase) * 0.5;
+                        f.mesh.material.opacity = 0.3 + Math.sin(elapsed * 3 + f.phase) * 0.35;
+                        f.mesh.rotation.y += Math.sin(elapsed * 0.5 + f.phase) * 0.02;
+                    }
                 });
+                // Smoke animation (enhanced — rising, drifting)
                 smokePlanes.forEach(s => {
-                    s.mesh.material.opacity = 0.04 + Math.sin(elapsed * 0.4 + s.phase) * 0.03;
-                    s.mesh.position.y += Math.sin(elapsed * 0.3 + s.phase) * 0.003;
+                    const t = elapsed * 0.3 + s.phase;
+                    s.mesh.material.opacity = 0.04 + Math.sin(t) * 0.03;
+                    // Gentle rise
+                    s.mesh.position.y = (s.baseY || s.mesh.position.y) + Math.sin(t * 0.5) * 1.5;
+                    // Drift sideways
+                    if (s.baseX !== undefined) {
+                        s.mesh.position.x = s.baseX + Math.sin(t * 0.7) * 2;
+                        s.mesh.position.z = s.baseZ + Math.cos(t * 0.5) * 1.5;
+                    }
+                    // Slowly grow
+                    const scale = 1 + Math.sin(t * 0.3) * 0.15;
+                    s.mesh.scale.set(scale, scale, scale);
                 });
 
+                // Survivor animation (enhanced — bobbing with SOS pulse)
                 survivorMeshes.forEach((s, i) => {
                     if (!s.found) {
-                        s.body.position.y = 0.4 + Math.sin(elapsed * 1.5 + i) * 0.1;
+                        // Unfound survivors: gentle bobbing + occasional "wave" scale pulse
+                        s.body.position.y = 0.4 + Math.sin(elapsed * 1.5 + i) * 0.15;
+                        const wavePulse = 1 + Math.sin(elapsed * 3 + i * 2) * 0.15;
+                        s.body.scale.set(wavePulse, 1, wavePulse);
                     } else if (s.ring) {
-                        s.body.position.y = 0.8 + Math.sin(elapsed * 1.5 + i) * 0.3;
-                        s.ring.scale.setScalar(1 + Math.sin(elapsed * 2 + i) * 0.2);
+                        // Found survivors: celebrating bounce + ring pulse
+                        s.body.position.y = 0.8 + Math.abs(Math.sin(elapsed * 2 + i)) * 0.5;
+                        s.ring.scale.setScalar(1 + Math.sin(elapsed * 2 + i) * 0.3);
+                        s.ring.material.opacity = 0.2 + Math.sin(elapsed * 3 + i) * 0.15;
                     }
                 });
 
@@ -1859,15 +1975,12 @@
                             if (frameCount - d.stuckCheck.frame > 40) {
                                 const moved = Math.hypot(p.x - d.stuckCheck.x, p.z - d.stuckCheck.z);
                                 if (moved < 1.0 && d.state === 'moving' && d.escapeMode === "none") {
-                                    // STUCK! Try rising first, then backtracking
-                                    if (Math.random() > 0.4) {
-                                        d.escapeMode = "rising"; d.escapeTimer = 240;
-                                        d.targetHeight = 25; // Rise higher than any tree
-                                        addThought(i, 'danger', `STUCK — Climbing to 25u to clear canopy.`);
-                                    } else {
-                                        d.escapeMode = "backtrack"; d.escapeTimer = 120;
-                                        addThought(i, 'danger', `STUCK — Rerouting around density...`);
-                                    }
+                                    // STUCK! Only fly up to clear obstacles, costing extra battery.
+                                    d.escapeMode = "rising"; 
+                                    d.escapeTimer = 240;
+                                    d.targetHeight = 25; // Rise higher than any tree
+                                    d.battery -= 5.0; // Battery penalty for climbing
+                                    addThought(i, 'danger', `STUCK — Climbing to 25u to clear canopy (5% bat penalty).`);
                                 }
                                 d.stuckCheck = { x: p.x, z: p.z, frame: frameCount };
                             }
@@ -1950,7 +2063,7 @@
                                 if (qs) qs.assigned = false;
 
                                 addMCP(i, 'call', 'scan_sector', { drone_id: `drone_${i + 1}`, sector_id: d.target.sector }, { scanned: true, survivors_in_range: survivorMeshes.filter(s => s.found).length });
-                                addThought(i, 'reason', `Scan done: ${d.target.sector}. Bat: ${d.battery.toFixed(0)}%. Total: ${d.sectorsScanned} sectors.`);
+                                addThought(i, 'info', `Scan done: ${d.target.sector}. Bat: ${d.battery.toFixed(0)}%. Total: ${d.sectorsScanned} sectors.`);
                                 d.battery -= 0.2; // Drain exactly once for the scan
                                 d.state = "idle"; // RESET TO IDLE SO AGENT CAN REASSIGN
                                 d.target.sector = null;
@@ -2014,99 +2127,101 @@
                 });
 
 
-                // Camera
-                // Camera follow
-                if (activeDrone >= 0 && activeDrone < drones.length) {
-                    const dp = drones[activeDrone].group.position;
-                    // Move camera + target by how much the drone moved this frame
-                    if (!drones[activeDrone]._lastCamPos) {
-                        drones[activeDrone]._lastCamPos = dp.clone();
-                        // Initial position: behind and above the drone
-                        cam.position.set(dp.x, dp.y + 12, dp.z - 18);
-                        controls.target.set(dp.x, dp.y, dp.z);
-                    }
-                    const delta = dp.clone().sub(drones[activeDrone]._lastCamPos);
-                    cam.position.add(delta);
-                    controls.target.add(delta);
-                    drones[activeDrone]._lastCamPos.copy(dp);
-                } else if (activeDrone === -3) {
-                    // Swarm Group Tracking Camera
-                    let minX = Infinity, minZ = Infinity, maxX = -Infinity, maxZ = -Infinity;
-                    let activeCount = 0;
-                    drones.forEach(d => {
-                        if (!d.dead) {
-                            minX = Math.min(minX, d.group.position.x);
-                            minZ = Math.min(minZ, d.group.position.z);
-                            maxX = Math.max(maxX, d.group.position.x);
-                            maxZ = Math.max(maxZ, d.group.position.z);
-                            activeCount++;
-                        }
-                    });
-                    if (activeCount > 0) {
-                        const cx = (minX + maxX) / 2;
-                        const cz = (minZ + maxZ) / 2;
-                        const span = Math.max(maxX - minX, maxZ - minZ);
-
-                        controls.target.lerp(new THREE.Vector3(cx, 0, cz), 0.05);
-
-                        const maxDist = Math.max(40, span * 1.5 + 20);
-                        const desiredCamPos = new THREE.Vector3(cx, maxDist * 0.8, cz + maxDist * 0.5);
-                        cam.position.lerp(desiredCamPos, 0.05);
-                    } else {
-                        // All dead, aim at base
-                        controls.target.lerp(new THREE.Vector3(BASE.x, 0, BASE.z), 0.05);
-                        cam.position.lerp(new THREE.Vector3(BASE.x, 30, BASE.z + 30), 0.05);
-                    }
-                }
-
-                controls.update();
-                updateStatus();
-                drawMinimap();
-                renderThoughts();
-
-                // Update drone overlay labels
-                for (let i = 0; i < 5; i++) {
-                    const label = document.getElementById(`drone-label-${i}`);
-                    if (!label) continue;
-
-                    const d = drones[i];
-                    // Hide if drone doesn't exist, is in camera view, or mission not started
-                    if (!d || !missionStarted || activeDrone >= 0) {
-                        label.style.display = 'none';
-                        continue;
-                    }
-
-                    label.style.display = 'block';
-
-                    // Project 3D position to screen
-                    const pos3 = d.group.position.clone();
-                    pos3.y += 3.5; // Adjusted height above drone
-                    pos3.project(cam);
-
-                    const x = (pos3.x * 0.5 + 0.5) * window.innerWidth;
-                    const y = (-(pos3.y) * 0.5 + 0.5) * window.innerHeight;
-
-                    // Hide if behind camera
-                    if (pos3.z > 1) {
-                        label.style.display = 'none';
-                        continue;
-                    }
-
-                    label.style.left = Math.round(x) + 'px';
-                    label.style.top = Math.round(y) + 'px';
-
-                    const statusText = d.dead ? 'CRASHED' : d.recharging ? 'CHARGING' : d.state === 'scanning' ? 'SCANNING' : d.state === 'moving' ? 'MOVING' : 'IDLE';
-                    const batClass = d.dead ? 'dead' : d.battery < 25 ? 'low' : '';
-                    const distToBase = Math.hypot(d.group.position.x - BASE.x, d.group.position.z - BASE.z);
-                    const estRTB = (distToBase * DRAIN_PER_UNIT * 1.4 + 8).toFixed(0);
-                    const color = DRONE_COLORS[i];
-
-                    label.innerHTML = `<span class="dl-name" style="color:${color}">D${i + 1}</span> ${statusText}<br>`
-                        + `<span class="dl-bat ${batClass}">⚡${d.battery.toFixed(0)}%</span>`
-                        + (d.dead ? '' : ` <span class="dl-rtb">← RTB: ~${estRTB}%</span>`);
-                }
-
             } // End of if (!isPaused)
+
+            // ─── CAMERA AND OVERLAYS (ALWAYS RUN) ───
+            // Camera follow
+            if (activeDrone >= 0 && activeDrone < drones.length) {
+                const dp = drones[activeDrone].group.position;
+                // Move camera + target by how much the drone moved this frame
+                if (!drones[activeDrone]._lastCamPos) {
+                    drones[activeDrone]._lastCamPos = dp.clone();
+                    // Initial position: behind and above the drone
+                    cam.position.set(dp.x, dp.y + 12, dp.z - 18);
+                    controls.target.set(dp.x, dp.y, dp.z);
+                }
+                const delta = dp.clone().sub(drones[activeDrone]._lastCamPos);
+                cam.position.add(delta);
+                controls.target.add(delta);
+                drones[activeDrone]._lastCamPos.copy(dp);
+            } else if (activeDrone === -3) {
+                // Swarm Group Tracking Camera
+                let minX = Infinity, minZ = Infinity, maxX = -Infinity, maxZ = -Infinity;
+                let activeCount = 0;
+                drones.forEach(d => {
+                    if (!d.dead) {
+                        minX = Math.min(minX, d.group.position.x);
+                        minZ = Math.min(minZ, d.group.position.z);
+                        maxX = Math.max(maxX, d.group.position.x);
+                        maxZ = Math.max(maxZ, d.group.position.z);
+                        activeCount++;
+                    }
+                });
+                if (activeCount > 0) {
+                    const cx = (minX + maxX) / 2;
+                    const cz = (minZ + maxZ) / 2;
+                    const span = Math.max(maxX - minX, maxZ - minZ);
+
+                    controls.target.lerp(new THREE.Vector3(cx, 0, cz), 0.05);
+
+                    const maxDist = Math.max(40, span * 1.5 + 20);
+                    const desiredCamPos = new THREE.Vector3(cx, maxDist * 0.8, cz + maxDist * 0.5);
+                    cam.position.lerp(desiredCamPos, 0.05);
+                } else {
+                    // All dead, aim at base
+                    controls.target.lerp(new THREE.Vector3(BASE.x, 0, BASE.z), 0.05);
+                    cam.position.lerp(new THREE.Vector3(BASE.x, 30, BASE.z + 30), 0.05);
+                }
+            }
+
+            controls.update();
+
+            // Always update HUD/minimap even when paused so interactions show immediately
+            updateStatus();
+            drawMinimap();
+            renderThoughts();
+
+            // Update drone overlay labels (always run so they track with camera orbit)
+            for (let i = 0; i < 5; i++) {
+                const label = document.getElementById(`drone-label-${i}`);
+                if (!label) continue;
+
+                const d = drones[i];
+                // Hide if drone doesn't exist, is in camera view, or mission not started
+                if (!d || !missionStarted || activeDrone >= 0) {
+                    label.style.display = 'none';
+                    continue;
+                }
+
+                label.style.display = 'block';
+
+                // Project 3D position to screen
+                const pos3 = d.group.position.clone();
+                pos3.y += 3.5; // Adjusted height above drone
+                pos3.project(cam);
+
+                const x = (pos3.x * 0.5 + 0.5) * window.innerWidth;
+                const y = (-(pos3.y) * 0.5 + 0.5) * window.innerHeight;
+
+                // Hide if behind camera
+                if (pos3.z > 1) {
+                    label.style.display = 'none';
+                    continue;
+                }
+
+                label.style.left = Math.round(x) + 'px';
+                label.style.top = Math.round(y) + 'px';
+
+                const statusText = d.dead ? 'CRASHED' : d.recharging ? 'CHARGING' : d.state === 'scanning' ? 'SCANNING' : d.state === 'moving' ? 'MOVING' : 'IDLE';
+                const batClass = d.dead ? 'dead' : d.battery < 25 ? 'low' : '';
+                const distToBase = Math.hypot(d.group.position.x - BASE.x, d.group.position.z - BASE.z);
+                const estRTB = (distToBase * DRAIN_PER_UNIT * 1.4 + 8).toFixed(0);
+                const color = DRONE_COLORS[i];
+
+                label.innerHTML = `<span class="dl-name" style="color:${color}">D${i + 1}</span> ${statusText}<br>`
+                    + `<span class="dl-bat ${batClass}">⚡${d.battery.toFixed(0)}%</span>`
+                    + (d.dead ? '' : ` <span class="dl-rtb">← RTB: ~${estRTB}%</span>`);
+            }
 
             renderer.render(scene, cam);
         }
@@ -2405,7 +2520,7 @@
             // ── Thought log ──
             addThought(-1, 'phase', 'PHASE 1: DISCOVERY — Fleet & Environment Reconnaissance');
             addThought(-1, 'action', 'Calling list_drones() to discover fleet on network...');
-            addThought(-1, 'reason', `Discovered ${drones.length} drones: ${DRONE_NAMES.slice(0, drones.length).join(', ')}`);
+            addThought(-1, 'info', `Discovered ${drones.length} drones: ${DRONE_NAMES.slice(0, drones.length).join(', ')}`);
             addThought(-1, 'phase', 'PHASE 2: DEPLOYMENT — Initializing Swarm');
 
             document.getElementById('start-btn').style.display = 'none';
@@ -2458,7 +2573,7 @@
                 }
             }
 
-            addThought(-1, 'reason', 'Strategy: Prioritize fire-adjacent sectors where survivors are most likely trapped.');
+            addThought(-1, 'info', 'Strategy: Prioritize fire-adjacent sectors where survivors are most likely trapped.');
             addThought(-1, 'phase', 'PHASE 3: EXECUTION — Autonomous wildfire search sweep');
 
             // Start sync loop
