@@ -1,198 +1,246 @@
+"""
+mcp_server.py — Drone Control API
+
+MCP Server that exposes drone functions as standardized tools for the Command Agent.
+This server acts as a radio interface between the command center and the drone fleet,
+delegating all physical operations to the Simulation Engine (source of truth).
+
+Tools exposed:
+  - Fleet Discovery: list_drones()
+  - Drone Queries:   get_drone_status(), get_battery_status()
+  - Drone Commands:  move_to(), assign_target(), scan_sector(), thermal_scan(), recall_for_charging()
+  - Environment:     get_environment(), get_sectors(), get_unscanned_sectors(), get_hazard_map()
+  - Mission:         get_world_state(), start_mission(), reset_mission(), get_mission_summary()
+  - Logging:         log_mission_event()
+"""
+
 import os
 import sys
+import math
+import time
 
-# Ensure project root is in PYTHONPATH for cloud deployment
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from mcp.server.fastmcp import FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
-from starlette.middleware.cors import CORSMiddleware
 from simulation.simulation_engine import SimulationEngine
 
 mcp = FastMCP("Rescue Drone Server", transport_security=TransportSecuritySettings(enable_dns_rebinding_protection=False))
 
-# Shared simulation state (singleton)
+# The simulation engine is the single source of truth for all world state.
+# The MCP server is a thin passthrough that wraps engine methods as MCP tools.
 engine = SimulationEngine()
 
 
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+#  MISSION LIFECYCLE
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 @mcp.tool()
-def log_mission_event(message: str) -> dict:
+def start_mission(survivor_count: int = None, active_drones: int = None) -> dict:
     """
-    Log a custom mission event (e.g., agent reasoning) to the central mission log.
-    Use this for transparency of the logic flow.
+    Initialize and start a search-and-rescue mission.
+    Generates hazards (fire, smoke) and places survivors in the disaster zone.
+    Call this once when the simulation begins.
     """
-    engine.log(message)
-    return {"status": "success"}
-
-
-@mcp.tool()
-def get_world_state() -> dict:
-    """
-    Get the complete current state of the world: drones, sectors, survivors, and time.
-    Use this for high-frequency polling to keep the simulation and agent in sync.
-    """
-    try:
-        return engine.get_world_state()
-    except Exception as e:
-        import traceback
-        traceback.print_exc()
-        return {"error": str(e)}
-
-
-@mcp.tool()
-def update_drone_assignment(drone_id: str, sector_id: str, reason: str = None) -> dict:
-    """
-    Command a drone to target a specific sector.
-    'reason' provides the LLM's strategic context for this assignment.
-    """
-    try:
-        print(f"🤖 COMMAND RECEIVED: {drone_id} -> {sector_id} ({reason})")
-        return engine.set_drone_target(drone_id, sector_id, reason)
-    except Exception as e:
-        import traceback
-        traceback.print_exc()
-        return {"error": str(e)}
-
-
-@mcp.tool()
-def update_drone_state(drone_id: str, battery: float, x: float, y: float, z: float, status: str) -> dict:
-    """
-    Update a drone's telemetry. The simulation should call this to sync the 
-    physical movement occurring in the 3D renderer back to the server.
-    """
-    try:
-        if drone_id not in engine.drones:
-            return {"error": f"Drone {drone_id} not found"}
-        drone = engine.drones[drone_id]
-        drone.battery_remaining = battery
-        drone.coordinates = (x, y, z)
-        drone.status = status
-        
-        # Trigger dynamic discovery as the drone moves
-        engine._update_discovery(x, z)
-        
-        return {"status": "success"}
-    except Exception as e:
-        import traceback
-        traceback.print_exc()
-        return {"error": str(e)}
-
-
-@mcp.tool()
-def update_environment(fire_sectors: list = None, smoke_sectors: list = None, scanned_sectors: list = None) -> dict:
-    """
-    Sync the environment state from the simulation.
-    Useful if the simulation generates dynamic hazards or scan results.
-    """
-    try:
-        if fire_sectors is not None:
-            engine.fire_sector_ids = set(fire_sectors)
-        if smoke_sectors is not None:
-            engine.smoke_sector_ids = set(smoke_sectors)
-        if scanned_sectors is not None:
-            for sid in scanned_sectors:
-                if sid in engine.sectors:
-                    if not engine.sectors[sid].get("scanned", False):
-                        print(f"🔥 update_environment MARKING AS SCANNED: {sid}")
-                    engine.sectors[sid]["scanned"] = True
-                    engine.sectors[sid]["status"] = "scanned"
-                    engine.sectors[sid]["assigned_to"] = None
-        return {"status": "success"}
-    except Exception as e:
-        import traceback
-        traceback.print_exc()
-        return {"error": str(e)}
-
-
+    return engine.start_mission(survivor_count=survivor_count, active_drones=active_drones)
 
 
 @mcp.tool()
 def reset_mission() -> dict:
     """
-    Reset the mission clock and survival timers. 
-    Call this when starting a new simulation run.
+    Reset the mission state for a fresh run.
+    Clears all timers, survivors, and sector states.
     """
     return engine.reset_mission()
 
 
 @mcp.tool()
-def start_mission() -> dict:
+def log_mission_event(message: str) -> dict:
     """
-    Transition the mission from 'waiting' to 'active'.
-    Call this when the user clicks the start button in the UI.
+    Log a mission event (e.g., agent reasoning, strategy decisions) to the central mission log.
+    These logs are displayed in the simulation UI for transparency.
     """
-    return engine.start_mission()
+    engine.log(message)
+    return {"status": "logged"}
 
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+#  FLEET DISCOVERY & DRONE QUERIES
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 @mcp.tool()
 def list_drones() -> list:
     """
-    Discover all drones currently on the network.
+    Discover all drones currently active on the network.
+    The agent must NOT hard-code drone IDs — use this tool to discover the fleet dynamically.
     Returns a list of drone IDs available for tasking.
     """
     return engine.list_drones()
 
 
-
 @mcp.tool()
-def get_battery_status(drone_id: str) -> dict:
+def get_drone_status(drone_id: str) -> dict:
     """
-    Get the battery status of a specific drone.
-    """
-    return engine.get_battery_status(drone_id)
-
-
-@mcp.tool()
-def get_status(drone_id: str) -> dict:
-    """
-    Get the current status of a specific drone.
+    Get the full status of a specific drone: position, battery, status, current target.
     """
     return engine.get_drone_status(drone_id)
 
 
 @mcp.tool()
+def get_battery_status(drone_id: str) -> dict:
+    """
+    Get the battery level of a specific drone.
+    Returns battery percentage and estimated remaining flight time.
+    """
+    return engine.get_battery_status(drone_id)
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+#  DRONE COMMANDS
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+@mcp.tool()
 def move_to(drone_id: str, x: float, y: float, z: float) -> dict:
     """
-    Move a drone to the specified (x, y, z) coordinates.
-    Battery drains proportional to distance. Fire/smoke zones cause extra drain.
-    Movement into no-fly zones will be REJECTED.
+    Command a drone to fly to the specified (x, y, z) coordinates.
+    Battery drains proportionally to distance traveled.
+    Fire and smoke zones cause increased battery drain.
+    Movement into designated no-fly zones will be REJECTED.
     """
     return engine.move_to(drone_id, x, y, z)
+
+
+@mcp.tool()
+def assign_target(drone_id: str, sector_id: str, reason: str = None) -> dict:
+    """
+    Assign a drone to navigate to and scan a specific sector.
+    The 'reason' field provides the agent's strategic reasoning for this assignment
+    (chain-of-thought transparency).
+    Use sector_id='__RECALL__' to recall a drone to base.
+    """
+    try:
+        print(f"🤖 COMMAND: {drone_id} → {sector_id} | Reason: {reason}")
+        result = engine.set_drone_target(drone_id, sector_id, reason)
+        return result
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@mcp.tool()
+def scan_sector(drone_id: str, sector_id: str) -> dict:
+    """
+    Command a drone to move to a sector's center and perform a full thermal scan.
+    Detects survivors and reveals the sector's true hazard status.
+    Updates the sector as 'scanned' in the world state.
+    """
+    try:
+        result = engine.scan_sector(drone_id, sector_id)
+        return result
+    except Exception as e:
+        return {"error": str(e)}
 
 
 @mcp.tool()
 def thermal_scan(drone_id: str) -> dict:
     """
     Perform a thermal scan at the drone's current position.
-    Detection radius is 14.5 units (covers a 20x20 sector).
-    Costs extra battery in fire zones.
+    Detects heat signatures (survivors) within the scan radius.
+    Returns list of detected survivor positions.
     """
-    return engine.thermal_scan(drone_id)
-
-
-@mcp.tool()
-def scan_sector(drone_id: str, sector_id: str) -> dict:
-    """
-    Move a drone to a sector's center and perform a thermal scan.
-    Will be REJECTED if the sector is a no-fly zone.
-    Fire/smoke sectors incur extra battery drain.
-    Returns scan results, hazard type, and remaining battery.
-    """
-    return engine.scan_sector(drone_id, sector_id)
+    try:
+        result = engine.thermal_scan(drone_id)
+        return result
+    except Exception as e:
+        return {"error": str(e)}
 
 
 @mcp.tool()
 def recall_for_charging(drone_id: str) -> dict:
     """
-    Recall a drone to base for charging. Battery restored to 100%.
+    Recall a drone to base for emergency recharging.
+    Battery will be restored to 100% upon arrival.
+    Use this when battery drops below safe levels.
     """
     return engine.recall_for_charging(drone_id)
 
 
 @mcp.tool()
+def report_telemetry(drone_id: str, battery: float, x: float, y: float, z: float, status: str, clear_target: bool = False) -> dict:
+    """
+    Called by the drone/frontend to report its current telemetry to the engine.
+    This triggers the drone's sensors to discover new hazards in its vicinity.
+    If clear_target is true, it indicates the drone has reached base and finished its mission.
+    """
+    try:
+        # Sync physical state into the engine
+        # Also triggers the drone's onboard sensors to discover nearby hazards (decentralized sensing).
+        # If clear_target is true, it indicates the drone has reached base and finished its mission.
+        engine.update_drone_telemetry(drone_id, battery, x, y, z, status, clear_target)
+
+        old_discovered_fires = {sid for sid, s in engine.sectors.items() if s["discovered"] and s["hazard"] == "fire"}
+        
+        # Decentralized Discovery: drone's onboard sensors scan the area
+        drone_obj = engine.drones.get(drone_id)
+        if hasattr(drone_obj, 'scan_surrounding'):
+            discovered = drone_obj.scan_surrounding(engine.sectors)
+            
+            # Log immediate discoveries
+            new_discovered_fires = {sid for sid, s in engine.sectors.items() if s["discovered"] and s["hazard"] == "fire"}
+            just_discovered = new_discovered_fires - old_discovered_fires
+            if just_discovered:
+                for sid in just_discovered:
+                    engine.log(f"🚨 ALERT! {drone_id} discovered a NEW FIRE at {sid}!")
+
+        return {"status": "ok"}
+    except Exception as e:
+        return {"error": str(e)}
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+#  ENVIRONMENT & SITUATIONAL AWARENESS
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+@mcp.tool()
+def get_world_state() -> dict:
+    """
+    Get the complete current state of the mission.
+    Includes: mission status, drone fleet, sector grid, discovered survivors,
+    wind conditions, and ground-truth hazard map for visualization.
+    This is the primary tool for situational awareness.
+    """
+    try:
+        world = engine.get_world_state()
+
+        # Add ground-truth hazard map for frontend fire/smoke visualization
+        # (Fire is visible to everyone — this is visual-only, not used for AI decisions)
+        ground_truth_hazards = {}
+        for sid, sdata in engine.sectors.items():
+            th = sdata.get("true_hazard", "clear")
+            if th != "clear":
+                ground_truth_hazards[sid] = th
+        world["ground_truth_hazards"] = ground_truth_hazards
+
+        return world
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return {"error": str(e)}
+
+
+@mcp.tool()
+def get_environment() -> dict:
+    """
+    Get environmental hazard data for the disaster zone.
+    Returns: identified fire zones, smoke sectors, no-fly zones, wind conditions.
+    Essential for mission planning — call this FIRST before planning routes.
+    """
+    return engine.get_environment()
+
+
+@mcp.tool()
 def get_sectors() -> dict:
     """
-    Get the full sector grid with hazard type and scan status.
+    Get the full sector grid with hazard type and scan status for each sector.
     Hazard types: clear, fire, smoke, no_fly.
     """
     return engine.get_sectors()
@@ -201,43 +249,25 @@ def get_sectors() -> dict:
 @mcp.tool()
 def get_unscanned_sectors() -> dict:
     """
-    Get only sectors that have NOT been scanned (includes no-fly zones).
+    Get only sectors that have NOT been scanned yet (excludes no-fly zones).
+    Use this to identify remaining search areas.
     """
     return engine.get_unscanned_sectors()
 
 
 @mcp.tool()
-def get_environment() -> dict:
-    """
-    Get the full environmental hazard data for the disaster zone.
-    Returns: no-fly zones, fire zones, smoke sectors, wind conditions.
-    Essential for mission planning — call this FIRST before planning routes.
-    """
-    return engine.get_environment()
-
-
-@mcp.tool()
 def get_hazard_map() -> dict:
     """
-    Get a per-sector hazard map showing hazard type, center, and scan status.
+    Get a per-sector hazard map with hazard type, center coordinates, and scan status.
     Useful for visualizing the disaster zone and planning safe routes.
     """
     return engine.get_hazard_map()
 
 
 @mcp.tool()
-def get_tactical_recommendations(drone_id: str, battery: float, current_pos: list[float], other_drones: list[dict]) -> list:
-    """
-    Get the top 5 tactical candidates for a drone based on hierarchical priority and proximity.
-    'other_drones' should be a list of {id, pos, state, target_sector} to avoid duplicate targeting.
-    """
-    return engine.get_tactical_recommendations(drone_id, battery, current_pos, other_drones)
-
-
-@mcp.tool()
 def get_mission_summary() -> dict:
     """
-    Get a full mission summary: coverage, survivors found, fleet status, logs.
+    Get a full mission summary: coverage percentage, survivors found, fleet status, mission logs.
     No-fly zones are excluded from coverage calculations.
     """
     return engine.get_mission_summary()

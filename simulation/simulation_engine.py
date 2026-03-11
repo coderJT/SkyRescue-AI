@@ -4,13 +4,16 @@ Implements a singleton pattern so all MCP tool calls share the same state.
 Manages a sector grid, no-fly zones, fire zones, smoke, and wind.
 """
 import math
-from drone.Drone import Drone
+import time
+import random
+import traceback
+from drone.drone import Drone
 
 
 class SimulationEngine:
     """
     Singleton simulation engine that manages drones, survivors, sectors,
-    and environmental hazards (no-fly zones, fire, smoke, wind).
+    and environmental hazards (fire, smoke, wind).
     """
     _instance = None
 
@@ -21,12 +24,13 @@ class SimulationEngine:
         return cls._instance
 
     def __init__(self):
+        if self._initialized:
+            return
         self._initialized = True
-        import time
         self.start_time = time.time()
+        self.last_drain_time = time.time()
         self.mission_log = []
 
-        # --- Drones (start at base camp in bottom-left) ---
         self.drones = {
             "drone_1": Drone("drone_1", 100, "active", (5, 5, 5)),
             "drone_2": Drone("drone_2", 100, "active", (5, 5, 5)),
@@ -35,7 +39,7 @@ class SimulationEngine:
             "drone_5": Drone("drone_5", 100, "active", (5, 5, 5)),
         }
 
-        # --- Sector Grid ---
+        # Initialize the world grid
         self.grid_size = 200
         self.sector_cols = 10
         self.sector_rows = 10
@@ -44,13 +48,10 @@ class SimulationEngine:
         self.sectors = {}
         self.mission_status = "waiting" # waiting | active | success | failure
         
-        # --- Environment: No-Fly Zones (fixed landmarks) ---
-        self.no_fly_zones = []
-        self.no_fly_sector_ids = set()
-        
-        # --- Dynamic Environment State ---
+        # --- 
         self.fire_sector_ids = set() # True fire
         self.smoke_sector_ids = set() # True smoke
+        self.no_fly_sector_ids = set() # Empty per user request
         self.fire_multipliers = {}
         self.discovered_sector_ids = set() # Shared swarm knowledge
         
@@ -88,7 +89,6 @@ class SimulationEngine:
 
         self.smoke_multiplier = 1.5
         # Discover initial base area (11x11 block)
-        self._update_discovery(5, 5, radius=5)
 
         # --- Environment: Wind ---
         self.wind = {
@@ -109,7 +109,6 @@ class SimulationEngine:
 
     def _generate_random_hazards(self):
         """Randomly seed fire and calculate smoke spreading."""
-        import random
         # 1. Clear previous truth AND discovery
         self.fire_sector_ids = set()
         self.smoke_sector_ids = set()
@@ -161,18 +160,21 @@ class SimulationEngine:
                         self.smoke_sector_ids.add(adj_id)
                         self.sectors[adj_id]["true_hazard"] = "smoke"
 
-    def _generate_random_survivors(self):
+    def _generate_random_survivors(self, count=None):
         """Randomly spawn survivors avoiding base camp."""
-        import random
         self.survivors = []
-        num_survivors = random.randint(7, 12)
+        num_survivors = count if count is not None else random.randint(7, 12)
         for _ in range(num_survivors):
-            # Try to pick a spot not in base camp (0,0) to (40,40)
-            for _attempt in range(10):
-                x = random.uniform(10, 190)
-                z = random.uniform(10, 190)
-                if not (x < 40 and z < 40):
-                    break
+            # Try to pick a spot not in base camp (0,0) to (40,40) AND not in No-Fly Zone
+            for _attempt in range(20): # Increased attempts
+                x = random.uniform(5, 195)
+                z = random.uniform(5, 195)
+                # Base camp safety
+                if (x < 40 and z < 40): continue
+                # No-Fly Zone check
+                sid = self._get_sector_at(x, z)
+                if sid in self.no_fly_sector_ids: continue
+                break
             
             true_hazard = self._get_true_hazard_at(x, z)
             limit = 600
@@ -180,30 +182,12 @@ class SimulationEngine:
             elif true_hazard == "smoke": limit = 180
             self.survivors.append({"pos": (round(x,1), 0, round(z,1)), "limit": limit, "expired": False})
 
-    def _update_discovery(self, x, z, radius=5):
-        """Reveal true_hazard for sectors within `radius` tiles of (x, z)."""
-        center_sid = self._get_sector_at(x, z)
-        parts = center_sid[1:].split("_")
-        row, col = int(parts[0]), int(parts[1])
-        for dr in range(-radius, radius + 1):
-            for dc in range(-radius, radius + 1):
-                nr, nc = row + dr, col + dc
-                if 0 <= nr < self.sector_rows and 0 <= nc < self.sector_cols:
-                    sid = f"S{nr}_{nc}"
-                    sector = self.sectors[sid]
-                    if not sector["discovered"]:
-                        sector["discovered"] = True
-                        sector["hazard"] = sector["true_hazard"]
-                        if sector["hazard"] != "clear":
-                            self.log(f"DISCOVERY: Swarm detected {sector['hazard'].upper()} at {sid}")
-
     def _get_true_hazard_at(self, x, z):
         sid = self._get_sector_at(x, z)
         return self.sectors[sid]["true_hazard"]
 
     def reset_mission(self):
         """Reset mission timer, survivors, and sector states for a new run."""
-        import time
         self.start_time = time.time()
         self.discovered_survivors = []
         self.mission_log = []
@@ -222,17 +206,25 @@ class SimulationEngine:
         self.log("Mission Reset: Hazards and survivors re-randomized.")
         self._generate_random_hazards()
         self._generate_random_survivors()
-        self._update_discovery(5, 5, radius=5) # Discover base
         self.mission_status = "waiting"
         return {"status": "success", "message": "Mission state fully reset and waiting for start."}
 
-    def start_mission(self):
+    def start_mission(self, survivor_count: int = None, active_drones: int = None):
         """Called when the user clicks explicitly to start the simulation."""
         self.mission_status = "active"
-        import time
         self.start_time = time.time()
-        self.log("Mission Started!")
-        return {"status": "success", "message": "Mission started."}
+        
+        # 1. Re-randomize hazards and survivors if requested
+        self._generate_random_hazards()
+        self._generate_random_survivors(count=survivor_count)
+        
+        # 2. Limit active drones if requested
+        if active_drones is not None:
+             # Simulation supports up to 5 drones. We could disable extras here.
+             pass
+
+        self.log(f"Mission Started with {len(self.survivors)} survivors!")
+        return {"status": "success", "message": "Mission started.", "survivor_count": len(self.survivors)}
 
     def _get_sector_at(self, x, z):
         """Return the sector ID for a given coordinate."""
@@ -250,6 +242,29 @@ class SimulationEngine:
         return 1.0
 
     # ─── Drone Operations ───
+    def update_drone_telemetry(self, drone_id: str, battery: float, x: float, y: float, z: float, status: str, clear_target: bool = False) -> dict:
+        """
+        Update a drone's telemetry.
+        """
+        if drone_id not in self.drones:
+            return {"error": f"Drone {drone_id} not found"}
+        
+        drone = self.drones[drone_id]
+        # Update coords/battery/status
+        drone.battery_remaining = battery
+        drone.coordinates = (x, y, z)
+        drone.status = status
+        
+        if clear_target:
+            if drone.target_sector and drone.target_sector in self.sectors:
+                s = self.sectors[drone.target_sector]
+                if s["assigned_to"] == drone_id:
+                    s["assigned_to"] = None
+                    if s["status"] == "assigned":
+                        s["status"] = "unscanned"
+            drone.target_sector = None
+            
+        return {"status": "success"}
 
     def list_drones(self):
         return list(self.drones.keys())
@@ -260,18 +275,7 @@ class SimulationEngine:
     def get_drone_status(self, drone_id):
         if drone_id not in self.drones:
             return {"error": f"Drone {drone_id} not found"}
-        drone = self.drones[drone_id]
-        d_dict = drone.to_dict()
-        # Find if this drone has an assigned sector
-        target = None
-        current_reason = getattr(drone, 'current_reason', None)
-        for sid, s in self.sectors.items():
-            if s["assigned_to"] == drone_id and not s["scanned"]:
-                target = sid
-                break
-        d_dict["target_sector"] = target
-        d_dict["reason"] = current_reason
-        return d_dict
+        return self.drones[drone_id].to_dict()
 
     def set_drone_target(self, drone_id, sector_id, reason=None):
         """Pure state update: Assign a drone to a sector with specific reasoning."""
@@ -279,24 +283,34 @@ class SimulationEngine:
             return {"error": f"Drone {drone_id} not found"}
         
         drone = self.drones[drone_id]
-        drone.current_reason = reason
         
-        # Clear previous assignment
-        for s in self.sectors.values():
-            if s["assigned_to"] == drone_id:
-                s["assigned_to"] = None
-                if s["status"] == "assigned":
-                    s["status"] = "unscanned"
+        # 1. Clear OLD assignment if it exists
+        if drone.target_sector and drone.target_sector in self.sectors:
+            old_s = self.sectors[drone.target_sector]
+            if old_s["assigned_to"] == drone_id:
+                old_s["assigned_to"] = None
+                if old_s["status"] == "assigned":
+                    old_s["status"] = "unscanned"
+        
+        # 2. Set NEW assignment
+        drone.target_sector = sector_id
+        drone.current_reason = reason
 
         if sector_id == "__RECALL__":
             self.log(f"STATE: {drone_id} target set to __RECALL__")
             return {"status": "success", "drone_id": drone_id, "target": "__RECALL__"}
 
         if sector_id not in self.sectors:
+            # Revert if sector invalid
+            drone.target_sector = None
             return {"error": f"Sector {sector_id} not found"}
         
+        # Update sector status - Note: Multiple drones COULD be assigned to one sector
+        # but the sector only tracks the LAST one assigned for status purposes.
+        # This is fine as long as the drones THEMSELVES know their target.
         self.sectors[sector_id]["assigned_to"] = drone_id
         self.sectors[sector_id]["status"] = "assigned"
+        
         log_msg = f"STATE: {drone_id} target set to {sector_id}"
         if reason:
             log_msg += f" | REASON: {reason}"
@@ -305,49 +319,66 @@ class SimulationEngine:
 
     def get_world_state(self):
         """Returns the complete ground truth of the simulation."""
-        self._update_wind()
-        import time
-        elapsed = time.time() - self.start_time
-        
-        # Calculate statistics
-        scannable = sum(1 for sid, s in self.sectors.items() if sid not in self.no_fly_sector_ids)
-        scanned = sum(1 for sid, s in self.sectors.items() if s["scanned"] and sid not in self.no_fly_sector_ids)
-        found = len(self.discovered_survivors)
-        total_needed = len(self.survivors)
-
-        # Update mission status
-        if self.mission_status == "active":
-            # Success: All scannable sectors are scanned
-            # (Optionally: or all survivors found)
-            if scannable > 0 and scanned >= scannable:
-                self.mission_status = "success"
-                self.log(f"Mission Complete: All {scannable} scannable sectors cleared.")
-
-        drones_state = {}
-        for did in self.drones:
-            drones_state[did] = self.get_drone_status(did)
+        try:
+            self._update_wind()
+            now = time.time()
+            elapsed = now - self.start_time
             
-        return {
-            "mission_status": self.mission_status,
-            "mission_complete": self.mission_status in ["success", "failure"],
-            "elapsed_seconds": round(elapsed, 1),
-            "found_survivors": found,
-            "total_survivors": total_needed,
-            "sectors_scanned": scanned,
-            "total_scannable_sectors": scannable,
-            "drones": drones_state,
-            "sectors": self.sectors,
-            "discovered_survivors": self.discovered_survivors,
-            "all_survivors": [s["pos"] for s in self.survivors],
-            "wind": self.wind,
-            "mission_log": self.mission_log[-20:], # Send last 20 events for sync
-        }
+            # --- IDLE DRAIN (Realism) ---
+            # Apply small drain to all non-offline drones based on time delta
+            delta = now - getattr(self, 'last_drain_time', now)
+            if delta > 0.5: # Only apply if > 0.5s passed to avoid floating point noise
+                idle_rate = 0.020 # 0.020% per second
+                for d in self.drones.values():
+                    if d.status not in ["offline", "charging", "landed"]:
+                        d.drain_battery(idle_rate * delta)
+                self.last_drain_time = now
+            
+            # Calculate statistics
+            scannable = sum(1 for sid, s in self.sectors.items() if sid not in self.no_fly_sector_ids)
+            scanned = sum(1 for sid, s in self.sectors.items() if s["scanned"] and sid not in self.no_fly_sector_ids)
+            found = len(self.discovered_survivors)
+            total_needed = len(self.survivors)
+
+            # Update mission status
+            if self.mission_status == "active":
+                # Success: All scannable sectors are scanned
+                # (Optionally: or all survivors found)
+                if scannable > 0 and scanned >= scannable:
+                    self.mission_status = "success"
+                    self.log(f"Mission Complete: All {scannable} scannable sectors cleared.")
+
+            drones_state = {}
+            for did in self.drones:
+                drones_state[did] = self.get_drone_status(did)
+                
+            return {
+                "mission_status": self.mission_status,
+                "mission_complete": self.mission_status in ["success", "failure"],
+                "elapsed_seconds": round(elapsed, 1),
+                "found_survivors": found,
+                "total_survivors": total_needed,
+                "sectors_scanned": scanned,
+                "total_scannable_sectors": scannable,
+                "coverage_pct": int((scanned / scannable) * 100) if scannable > 0 else 0,
+                "drones": drones_state,
+                "sectors": self.sectors,
+                "discovered_survivors": self.discovered_survivors,
+                "all_survivors": [s["pos"] for s in self.survivors],
+                "wind": self.wind,
+                "mission_log": self.mission_log[-20:], # Send last 20 events for sync
+            }
+        except Exception as e:
+            with open("/tmp/engine_error.log", "a") as f:
+                f.write(f"\n--- ERROR IN get_world_state ({time.ctime()}) ---\n")
+                traceback.print_exc(file=f)
+            raise e
 
     def move_to(self, drone_id, x, y, z):
         if drone_id not in self.drones:
             return {"error": f"Drone {drone_id} not found"}
         drone = self.drones[drone_id]
-        if drone.status not in ["active", "moving", "scanning"]:
+        if drone.status not in ["active", "moving", "scanning", "waiting_orders"]:
             return {"error": f"Drone {drone_id} is {drone.status}, cannot move"}
 
         # Check if destination is in a no-fly zone
@@ -366,17 +397,11 @@ class SimulationEngine:
         old_coords = drone.coordinates
         drone.move_to(x, y, z)
         
-        # Trigger dynamic hazard discovery
-        self._update_discovery(x, z)
-
         if total_mult > 1.0:
-            # move_to already did base 0.05 drain. We add the rest.
+            # move_to already did base 0.20 drain. We add the rest.
             old_x, old_y, old_z = old_coords
             distance = math.sqrt((x - old_x)**2 + (y - old_y)**2 + (z - old_z)**2)
-            # base_drain = distance * 0.05
-            # actual_drain = base_drain * total_mult
-            # extra_drain = actual_drain - base_drain = base_drain * (total_mult - 1)
-            extra_drain = (distance * 0.05) * (total_mult - 1)
+            extra_drain = (distance * 0.20) * (total_mult - 1)
             drone.drain_battery(extra_drain)
 
         hazard_label = ""
@@ -399,13 +424,12 @@ class SimulationEngine:
         multiplier = self._battery_multiplier_at(drone.coordinates[0], drone.coordinates[2])
         
         # Check survival limits
-        import time
         elapsed = time.time() - self.start_time
         active_survivors = [s["pos"] for s in self.survivors if not s["expired"] and elapsed < s["limit"]]
         
         detected = drone.thermal_scan(active_survivors)
         if multiplier > 1.0:
-            drone.drain_battery(0.2 * (multiplier - 1))  # extra scan drain
+            drone.drain_battery(1.0 * (multiplier - 1))  # extra scan drain
 
         for s in detected:
             if s not in self.discovered_survivors:
@@ -467,7 +491,6 @@ class SimulationEngine:
 
     def _update_wind(self):
         """Add slight fluctuations to wind direction and speed."""
-        import random
         # Jitter angle by ±2 degrees
         self.wind["angle_deg"] = (self.wind["angle_deg"] + random.uniform(-2, 2)) % 360
         # Jitter speed by ±1 kmh, capped between 20 and 50
@@ -547,7 +570,7 @@ class SimulationEngine:
         drone = self.drones[drone_id]
         sector = self.sectors[sector_id]
 
-        if drone.status not in ["active", "moving", "scanning"]:
+        if drone.status not in ["active", "moving", "scanning", "waiting_orders"]:
             return {"error": f"Drone {drone_id} is {drone.status}, cannot scan sector"}
 
         cx, cz = sector["center"]
@@ -559,10 +582,10 @@ class SimulationEngine:
         if "error" in scan_result:
             return scan_result
 
-        # Discovery also happens on scan
-        self._update_discovery(cx, cz)
-
+        # Reveal the truth upon dedicated scan
         sector["scanned"] = True
+        sector["discovered"] = True # Scan implies discovery
+        sector["hazard"] = sector["true_hazard"]
         sector["assigned_to"] = drone_id
         sector["survivors_found"] = scan_result["detected"]
 
@@ -570,6 +593,10 @@ class SimulationEngine:
         hazard_label = f" [{hazard.upper()}]" if hazard != "clear" else ""
         self.log(f"{drone_id} scanned sector {sector_id}{hazard_label} at ({cx},{cz}). Found {scan_result['detected_count']} survivors.")
 
+        # Success: Clear drone target
+        drone.target_sector = None
+        drone.set_status("waiting_orders")
+        
         return {
             "drone": drone_id,
             "sector": sector_id,
@@ -578,53 +605,6 @@ class SimulationEngine:
             "survivors_found": scan_result["detected"],
             "battery_after": scan_result["battery_after"],
         }
-
-    def get_tactical_recommendations(self, drone_id, battery, current_pos, other_drones):
-        """
-        Calculate the top 5 tactical candidates based on:
-        1. Priority (Fire > Smoke > Clear)
-        2. Proximity (Distance to drone)
-        3. Swarm Coordination (Avoid sectors already targeted by teammates)
-        """
-        cx, cy, cz = current_pos
-        candidates = []
-        
-        # Identify sectors already claimed by teammates
-        claimed_sectors = {d.get('target_sector') for d in other_drones if d.get('target_sector')}
-        
-        import time
-        elapsed = time.time() - self.start_time
-
-        for sid, sector in self.sectors.items():
-            if sector["scanned"] or sector["hazard"] == "no_fly" or sid in claimed_sectors:
-                continue
-                
-            scx, scy = sector["center"]
-            dist = math.sqrt((scx - cx)**2 + (scy - cy)**2)
-            
-            # Priority weights (Survival Timers: Fire=60s, Smoke=180s, Clear=600s)
-            limit = 600
-            if sector["hazard"] == "fire": limit = 60
-            elif sector["hazard"] == "smoke": limit = 180
-            
-            time_left = max(0, limit - elapsed)
-            
-            # Urgent if time_left is low
-            candidates.append({
-                "id": sid,
-                "center": list(sector["center"]),
-                "distance": round(dist, 1),
-                "hazard": sector["hazard"],
-                "time_left_seconds": round(time_left, 1),
-                "priority_weight": time_left # Lower time left = higher priority
-            })
-            
-        # Sort: Primary by Time Left (Urgency), Secondary by Distance
-        candidates.sort(key=lambda x: (x["priority_weight"], x["distance"]))
-        
-        return candidates[:5]
-
-    # ─── Summary ───
 
     def get_mission_summary(self):
         total_scannable = len(self.sectors) - len(self.no_fly_sector_ids)
