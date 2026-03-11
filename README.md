@@ -150,7 +150,7 @@ git clone https://github.com/YOUR_USERNAME/vhack-cs3.git
 cd vhack-cs3
 
 # Install dependencies
-pip install fastapi uvicorn langchain-groq langchain-core pydantic mcp
+pip install -r requirements.txt
 ```
 
 ### 2. Launch the Environment (Terminal 1)
