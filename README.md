@@ -5,7 +5,7 @@
   </p>
   <p align="center">
     <img src="https://img.shields.io/badge/MCP-Model_Context_Protocol-blueviolet?style=for-the-badge" alt="MCP">
-    <img src="https://img.shields.io/badge/LLM-Mistral_AI-orange?style=for-the-badge" alt="Mistral AI">
+    <img src="https://img.shields.io/badge/LLM-Groq-orange?style=for-the-badge" alt="Groq">
     <img src="https://img.shields.io/badge/3D-Three.js-green?style=for-the-badge" alt="Three.js">
     <img src="https://img.shields.io/badge/Framework-LangChain-blue?style=for-the-badge" alt="LangChain">
     <img src="https://img.shields.io/badge/API-FastAPI-teal?style=for-the-badge" alt="FastAPI">
@@ -24,14 +24,14 @@ In wildfire disasters, **every second counts**. Search & Rescue teams face massi
 
 ## 💡 Solution Overview
 
-SkyRescue AI is a **full-stack multi-agent system** that coordinates a fleet of 1–5 rescue drones in a simulated wildfire disaster zone. The system uses the **Model Context Protocol (MCP)** for structured tool communication and **Mistral AI (via LangChain)** as a strategic commander that makes real-time tactical decisions.
+SkyRescue AI is a **full-stack multi-agent system** that coordinates a fleet of 1–5 rescue drones in a simulated wildfire disaster zone. The system uses the **Model Context Protocol (MCP)** for structured tool communication and **Groq (via LangChain)** as a strategic commander that makes real-time tactical decisions.
 
 ### Key Innovation: Two-Brain Architecture
 
 | Layer                            | Technology                    | Role                                                                                 |
 | -------------------------------- | ----------------------------- | ------------------------------------------------------------------------------------ |
 | **Tactical Brain** (Local) | JavaScript + Heuristic Engine | Instant proximity-based assignment, obstacle avoidance, battery management           |
-| **Strategic Brain** (LLM)  | Mistral AI via LangChain      | High-level swarm coordination, survival deadline prioritization, conflict resolution |
+| **Strategic Brain** (LLM)  | Groq via LangChain      | High-level swarm coordination, survival deadline prioritization, conflict resolution |
 
 Drones deploy **instantly** using local intelligence, and the LLM Commander can **reroute** them in real-time based on evolving battlefield conditions.
 
@@ -65,17 +65,16 @@ Drones deploy **instantly** using local intelligence, and the LLM Commander can 
 
 ### 📡 MCP Tool Integration
 
-Full Model Context Protocol server with **15 tools** that any MCP client can discover and call:
+Full Model Context Protocol server with **17 tools** that any MCP client can discover and call:
 
 | Category               | Tools                                                          |
 | ---------------------- | -------------------------------------------------------------- |
-| **Discovery**    | `list_drones`, `get_fleet_status`, `get_environment`     |
-| **Navigation**   | `move_to`, `recall_for_charging`                           |
+| **Discovery**    | `list_drones`, `get_drone_status`, `get_environment`     |
+| **Navigation**   | `move_to`, `assign_target`, `recall_for_charging`                           |
 | **Scanning**     | `thermal_scan`, `scan_sector`                              |
-| **Intelligence** | `get_tactical_recommendations`, `get_high_level_decision`  |
-| **Situational**  | `get_sectors`, `get_unscanned_sectors`, `get_hazard_map` |
-| **Mission**      | `reset_mission`, `get_mission_summary`                     |
-| **Status**       | `get_battery_status`, `get_status`                         |
+| **Situational**  | `get_world_state`, `get_sectors`, `get_unscanned_sectors`, `get_hazard_map` |
+| **Mission**      | `init_mission`, `log_mission_event`, `get_mission_summary`                     |
+| **Status/Telemetry**| `get_battery_status`, `report_telemetry`                         |
 
 ### 🖥️ Immersive 3D Simulation
 
@@ -108,15 +107,15 @@ Full Model Context Protocol server with **15 tools** that any MCP client can dis
                              │
               ┌──────────────▼──────────────┐
               │      MCP Server (SSE)       │
-              │  (run_server.py — FastMCP)  │
+              │  (mcp_server.py — FastMCP)  │
               │                             │
-              │  15 discoverable MCP tools  │
-              │  Calls Mistral AI directly  │
+              │  17 discoverable MCP tools  │
+              │  Calls Groq directly        │
               └──────────────┬──────────────┘
                              │ LangChain
               ┌──────────────▼──────────────┐
-              │      Mistral AI (LLM)        │
-              │   mistral-large-latest       │
+              │      Groq (LLM)              │
+              │   llama-3.1-8b-instant       │
               └─────────────────────────────┘
 
 *\*Local Brain: Heuristic-based autonomous fallback logic running directly in the browser.*
@@ -132,7 +131,7 @@ vhack-cs3/
 │   ├── simulation.html            # 🖥️  Main 3D simulation (Three.js renderer)
 │   └── simulation_engine.py       # ⚙️  Core physics & mission logic
 ├── agent/
-│   └── commander_agent.py         # 🤖 Autonomous LLM Swarm Commander
+│   └── orchestrator.py            # 🤖 Autonomous LLM Swarm Commander
 ├── mcp_app/
 │   └── mcp_server.py              # 📡 Unified FastMCP Server
 ├── drone/
@@ -148,7 +147,7 @@ vhack-cs3/
 ### Prerequisites
 
 - **Python 3.11+**
-- **Mistral AI API Key** — Get one free at [console.mistral.ai](https://console.mistral.ai)
+- **Groq API Key** — Get one at [console.groq.com](https://console.groq.com)
 - **Node.js 18+** — For the MCP Inspector (optional)
 - A modern browser (Chrome, Firefox, Edge)
 
@@ -167,8 +166,8 @@ pip install fastapi uvicorn langchain-mistralai langchain-core pydantic mcp
 This script starts the MCP server and automatically opens the 3D simulation in your default browser.
 
 ```bash
-# Set your Mistral API key
-export MISTRAL_API_KEY=your_api_key_here
+# Set your Groq API key
+export GROQ_API_KEY=your_api_key_here
 
 # Start the server + UI
 python start.py
@@ -251,15 +250,25 @@ graph TD
 score = distance × priority_multiplier
 ```
 
-Where `priority_multiplier` is: Fire = 0.1 (highest priority), Smoke = 0.5, Clear = 1.0.
-It also performs battery feasibility checks before assignment.
+### Decision Intelligence
+
+**Local Brain** uses an additive scoring function to find the best candidate:
+
+```
+score = distance_penalty + hazard_urgency + fleet_eta_penalty
+```
+
+- **Hazard Urgency**: Prioritizes Fire (60s deadline) > Smoke (180s deadline) > Frontier exploration.
+- **Fleet ETA Penalty**: Adds `+2000` to the score if another drone (even a busy one) can reach the sector significantly faster.
+- It also performs high-precision battery feasibility checks (travel + scan + RTB) before assignment.
 
 **LLM Brain** receives:
 
-- Drone's battery and position
-- All teammates' positions and current targets
-- Top 10 tactical candidates with survival deadlines and distances
-- Returns a JSON decision with reasoning
+- Drone's battery and position.
+- All teammates' positions, targets, and status.
+- **Top 3 tactical candidates** per drone with battery cost/remaining and hazard status.
+- **Fleet Arrival Comparison**: Explicit arrival context (e.g., "fastest to reach S5_2", "fallback slower than drone_1 by ~15u").
+- Returns a JSON decision with specific reasoning justifying the distance/battery/fleet context.
 
 ---
 
