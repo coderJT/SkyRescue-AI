@@ -30,6 +30,11 @@ class SimulationEngine:
         self.start_time = time.time()
         self.last_drain_time = time.time()
         self.mission_log = []
+        
+        # --- Pause System ---
+        self.paused = False
+        self.pause_start_time = 0
+        self.total_paused_duration = 0
 
         self.drones = {
             "drone_1": Drone("drone_1", 100, "active", (5, 5, 5)),
@@ -207,12 +212,18 @@ class SimulationEngine:
         self._generate_random_hazards()
         self._generate_random_survivors()
         self.mission_status = "waiting"
+        self.paused = False
+        self.pause_start_time = 0
+        self.total_paused_duration = 0
         return {"status": "success", "message": "Mission state fully reset and waiting for start."}
 
     def start_mission(self, survivor_count: int = None, active_drones: int = None):
         """Called when the user clicks explicitly to start the simulation."""
         self.mission_status = "active"
         self.start_time = time.time()
+        self.paused = False
+        self.pause_start_time = 0
+        self.total_paused_duration = 0
         
         # 1. Re-randomize hazards and survivors if requested
         self._generate_random_hazards()
@@ -322,11 +333,19 @@ class SimulationEngine:
         try:
             self._update_wind()
             now = time.time()
-            elapsed = now - self.start_time
+            
+            if self.paused:
+                elapsed = self.pause_start_time - self.start_time - self.total_paused_duration
+            else:
+                elapsed = now - self.start_time - self.total_paused_duration
             
             # --- IDLE DRAIN (Realism) ---
             # Apply small drain to all non-offline drones based on time delta
-            delta = now - getattr(self, 'last_drain_time', now)
+            if self.paused:
+                self.last_drain_time = now # Freeze drain
+                delta = 0
+            else:
+                delta = now - getattr(self, 'last_drain_time', now)
             if delta > 0.5: # Only apply if > 0.5s passed to avoid floating point noise
                 idle_rate = 0.020 # 0.020% per second
                 for d in self.drones.values():
@@ -424,20 +443,39 @@ class SimulationEngine:
         multiplier = self._battery_multiplier_at(drone.coordinates[0], drone.coordinates[2])
         
         # Check survival limits
-        elapsed = time.time() - self.start_time
-        active_survivors = [s["pos"] for s in self.survivors if not s["expired"] and elapsed < s["limit"]]
+        now = time.time()
+        if self.paused:
+            elapsed = self.pause_start_time - self.start_time - self.total_paused_duration
+        else:
+            elapsed = now - self.start_time - self.total_paused_duration
+            
+        drone_x, _, drone_z = drone.coordinates
+        current_sid = self._get_sector_at(drone_x, drone_z)
         
-        detected = drone.thermal_scan(active_survivors)
+        # Sector-based detection: find all active survivors in the current sector
+        detected = []
+        for s_data in self.survivors:
+            if s_data["expired"] or elapsed >= s_data["limit"]:
+                continue
+            sx, sy, sz = s_data["pos"]
+            if self._get_sector_at(sx, sz) == current_sid:
+                detected.append(s_data["pos"])
+        
+        # Cost 1.0% battery for the scan (matching drone.py internal logic but handled here)
+        drone.drain_battery(1.0)
+        
         if multiplier > 1.0:
-            drone.drain_battery(1.0 * (multiplier - 1))  # extra scan drain
-
+            drone.drain_battery(1.0 * (multiplier - 1))  # extra scan drain if in hazard
+            
         for s in detected:
             if s not in self.discovered_survivors:
                 self.discovered_survivors.append(s)
-                self.log(f"🔥 NEW SURVIVOR FOUND by {drone_id} at {s}!")
+                self.log(f"🔥 NEW SURVIVOR FOUND by {drone_id} in {current_sid} at {s}!")
+                
         return {
             "drone": drone_id,
             "position": list(drone.coordinates),
+            "sector": current_sid,
             "detected_count": len(detected),
             "detected": [list(s) for s in detected],
             "battery_after": round(drone.battery_remaining, 1),
@@ -619,3 +657,23 @@ class SimulationEngine:
             "fleet_status": self.get_fleet_status(),
             "log": self.mission_log[-20:],
         }
+
+    def toggle_pause(self, paused: bool = None):
+        """Toggle or set the pause state of the simulation."""
+        now = time.time()
+        if paused is not None:
+            if paused == self.paused:
+                return {"status": "no_change", "paused": self.paused}
+            self.paused = paused
+        else:
+            self.paused = not self.paused
+
+        if self.paused:
+            self.pause_start_time = now
+            self.log("⏸ Simulation Paused")
+        else:
+            if self.pause_start_time > 0:
+                self.total_paused_duration += (now - self.pause_start_time)
+            self.log("▶ Simulation Resumed")
+        
+        return {"status": "success", "paused": self.paused}

@@ -81,7 +81,7 @@
             position: absolute;
             top: 12px;
             right: 12px;
-            width: 280px;
+            width: 380px;
             display: flex;
             flex-direction: column;
             gap: 8px;
@@ -102,11 +102,58 @@
             letter-spacing: 1.5px;
         }
 
+        #minimap-content {
+            display: flex;
+            align-items: flex-start;
+            gap: 12px;
+        }
+
+        #minimap-legend {
+            flex: 0 0 85px;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            padding-top: 5px;
+        }
+
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 9px;
+            color: #8899aa;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .legend-box {
+            width: 10px;
+            height: 10px;
+            border-radius: 2px;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            flex-shrink: 0;
+        }
+
+        .legend-icon {
+            font-size: 10px;
+            width: 12px;
+            text-align: center;
+            flex-shrink: 0;
+        }
+
+        .legend-circle {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            flex-shrink: 0;
+        }
+
         #minimap {
             width: 260px;
             height: 260px;
             border-radius: 4px;
             border: 1px solid #1a2a1a;
+            flex: 0 0 260px;
         }
 
         #thinking-box {
@@ -646,6 +693,40 @@
                 <h4><span class="panel-toggle" id="toggle-minimap"
                         onclick="togglePanel('minimap-content', 'toggle-minimap')">[-]</span> ⬡ 2D TACTICAL MAP</h4>
                 <div id="minimap-content">
+                    <div id="minimap-legend">
+                        <div class="legend-item">
+                            <div class="legend-box" style="background: #441100; border-color: #ff440077;"></div>
+                            <span>Fire Zone</span>
+                        </div>
+                        <div class="legend-item">
+                            <div class="legend-box" style="background: #332810; border-color: #ffaa0055;"></div>
+                            <span>Smoke</span>
+                        </div>
+                        <div class="legend-item">
+                            <div class="legend-box" style="background: #222; border-color: #444;"></div>
+                            <span>No-Fly</span>
+                        </div>
+                        <div class="legend-item">
+                            <div class="legend-box" style="background: #1a3a2a; border-color: #33aa3355;"></div>
+                            <span>Scanned</span>
+                        </div>
+                        <div class="legend-item" style="margin-top: 4px;">
+                            <div class="legend-circle" style="background: #ff3300; box-shadow: 0 0 4px #ff3300;"></div>
+                            <span>Survivor</span>
+                        </div>
+                        <div class="legend-item">
+                            <div class="legend-circle" style="background: #00ff44; box-shadow: 0 0 4px #00ff44;"></div>
+                            <span>Rescued</span>
+                        </div>
+                        <div class="legend-item" style="margin-top: 4px;">
+                            <div class="legend-box" style="background: #3388ff; border-radius: 50%;"></div>
+                            <span>Drone</span>
+                        </div>
+                        <div class="legend-item">
+                            <div class="legend-icon">🔥</div>
+                            <span>Active Fire</span>
+                        </div>
+                    </div>
                     <canvas id="minimap" width="260" height="260"></canvas>
                 </div>
             </div>
@@ -672,8 +753,7 @@
                 </div>
                 <div id="speed-slider-box">
                     <label>⚡ Speed</label>
-                    <input type="range" id="speed-slider" min="5" max="50" value="20"
-                        oninput="updateSpeed(this.value)">
+                    <input type="range" id="speed-slider" min="5" max="50" value="20" oninput="updateSpeed(this.value)">
                     <span id="speed-val">0.20</span>
                     <button id="pause-btn" onclick="togglePause()"
                         style="background:rgba(255,200,50,0.15);border-color:rgba(255,200,50,0.3);color:#ffd855; padding:3px 10px; border-radius:4px; font-size:10px; cursor:pointer; pointer-events:auto; border-width:1px; border-style:solid; transition:all 0.2s;">⏸
@@ -760,7 +840,12 @@
                 btn.style.background = isPaused ? 'rgba(85,255,85,0.15)' : 'rgba(255,200,50,0.15)';
             }
 
-            // Manage paused time to keep the mission clock accurate
+            // Sync pause state with MCP backend to freeze physical simulation clock/battery/deadlines
+            if (mcpClient && mcpClient.connected) {
+                mcpClient.callTool('toggle_pause', { paused: isPaused }).catch(e => console.warn(e));
+            }
+
+            // Manage local paused time for frontend camera/physics smoothing
             if (isPaused) {
                 pauseStartTime = performance.now();
             } else {
@@ -773,7 +858,7 @@
             const btn = document.getElementById(btnId);
             if (!el || !btn) return;
             if (el.style.display === 'none') {
-                el.style.display = 'block';
+                el.style.display = ''; // Revert to CSS definition (e.g., flex)
                 btn.textContent = '[-]';
             } else {
                 el.style.display = 'none';
@@ -1185,7 +1270,7 @@
         // Sun & Moon meshes with lighting effects (glow & emitted light)
         const sunGlow = new THREE.PointLight(0xffaa00, 2, 300);
         const sunMesh = new THREE.Mesh(
-            new THREE.SphereGeometry(15, 32, 32), 
+            new THREE.SphereGeometry(15, 32, 32),
             new THREE.MeshBasicMaterial({ color: 0xffffee, transparent: true, opacity: 0.9 })
         );
         // Outer halo for sun
@@ -1204,7 +1289,7 @@
 
         const moonGlow = new THREE.PointLight(0x88aaff, 1.5, 200);
         const moonMesh = new THREE.Mesh(
-            new THREE.SphereGeometry(12, 32, 32), 
+            new THREE.SphereGeometry(12, 32, 32),
             new THREE.MeshBasicMaterial({ color: 0xccddff })
         );
         // Outer halo for moon
@@ -1959,7 +2044,7 @@
                                 const moved = Math.hypot(p.x - d.stuckCheck.x, p.z - d.stuckCheck.z);
                                 if (moved < 1.0 && d.state === 'moving' && d.escapeMode === "none") {
                                     // STUCK! Only fly up to clear obstacles, costing extra battery.
-                                    d.escapeMode = "rising"; 
+                                    d.escapeMode = "rising";
                                     d.escapeTimer = 240;
                                     d.targetHeight = 25; // Rise higher than any tree
                                     d.battery -= 5.0; // Battery penalty for climbing

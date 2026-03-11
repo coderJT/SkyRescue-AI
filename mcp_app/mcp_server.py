@@ -64,6 +64,15 @@ def log_mission_event(message: str) -> dict:
     return {"status": "logged"}
 
 
+@mcp.tool()
+def toggle_pause(paused: bool = None) -> dict:
+    """
+    Toggle or set the pause state of the simulation.
+    When paused, the mission clock, battery drain, and survivor deadlines are frozen.
+    """
+    return engine.toggle_pause(paused=paused)
+
+
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 #  FLEET DISCOVERY & DRONE QUERIES
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
