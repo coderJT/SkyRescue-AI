@@ -42,16 +42,18 @@ Drones deploy **instantly** using local intelligence, and the LLM Commander can 
 ### 🚁 Autonomous Drone Swarm
 
 - **1–5 configurable drones** with independent battery, pathfinding, and decision-making
-- **Obstacle avoidance** with stuck detection and escape maneuvers (rise-above-canopy, backtrack)
-- **Smart RTB (Return-to-Base)** — drones calculate remaining battery needed for safe return
-- **Auto-recharging** — drones return to base, recharge to 100%, and redeploy automatically
+- **Optimal Swarm Coordination** — Drones evaluate fleet-wide ETA for every sector, ensuring the closest drone (even if busy) is prioritized.
+- **Improved Obstacle Avoidance** — Stuck drones exclusively climb vertically to clear canopies, incurring a 5.0% battery penalty for high-energy vertical lift.
+- **High-Precision RTB (Return-to-Base)** — Precision battery formulas match the simulation engine's drain exactly for zero-failure returns.
+- **Visual Observation Rings** — Live oscillating radius indicators (5 sectors) show exactly what each drone is currently observing.
+- **Auto-recharging** — Drones return to base, recharge to 100%, and redeploy automatically
 
 ### 🧠 Dual-Brain Intelligence
 
-- **Local Brain**: Greedy proximity + urgency heuristic for instant target assignment
-- **LLM Brain**: Mistral AI evaluates tactical candidates, teammate positions, and survival deadlines
-- **Seamless switching** between Local and LLM modes via UI toggle
-- **Conflict avoidance** — LLM sees all teammate positions/targets to prevent duplicate scanning
+- **Local Brain**: Greedy proximity + fleet-wide ETA penalty system for instant unit-aware assignments.
+- **LLM Brain**: Mistral AI evaluates relative ETA comparisons (e.g., "fastest to reach" or "fallback") to justify tactical assignments.
+- **Seamless switching** between Local and LLM modes via UI toggle.
+- **Conflict avoidance** — LLM sees all teammate positions/targets and fleet-wide arrival times to prevent duplicate scanning.
 
 ### 🔥 Realistic Disaster Environment
 
@@ -272,13 +274,13 @@ It also performs battery feasibility checks before assignment.
 
 | Feature                          | Description                                                   |
 | -------------------------------- | ------------------------------------------------------------- |
-| **Battery Safety Net**     | Drones calculate RTB cost with 40% path overhead margin       |
+| **Fleet ETA Sync**         | Drones only claim sectors if they are truly the fastest to reach them |
+| **Hallucination Override** | Orchestrator vetoes and overrides LLM recalls if drone has >30% battery |
+| **Vertical Canopy Escape** | Drones rise to 25u altitude + battery penalty to clear obstacles (no backtracking) |
+| **Battery Safety Net**     | High-precision RTB formulas with safety margin overhead       |
 | **Stuck Detection**        | If a drone moves < 1 unit in 40 frames, it triggers escape    |
-| **Canopy Escape**          | Drones rise to 25u altitude to clear dense forest             |
-| **Backtrack Escape**       | Random reverse maneuver to free from obstacle traps           |
-| **LLM Fallback**           | If LLM fails, system falls back to local heuristic assignment |
-| **Sector Locking**         | Assigned sectors are locked to prevent duplicate scans        |
-| **Single-Fire Completion** | Mission success triggers exactly once (no log explosion)      |
+| **Sector Locking**         | Assigned sectors are locked globally to prevent duplicate scans |
+| **Observation Radius**     | Optimized 5-sector radius for real-time hazard detection       |
 
 ---
 
