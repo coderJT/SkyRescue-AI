@@ -1,0 +1,13 @@
+train: ../train/images
+val: ../valid/images
+test: ../test/images
+
+nc: 1
+names: ['fire']
+
+roboflow:
+  workspace: tim-4ijf0
+  project: drone-fire-detection-byija
+  version: 1
+  license: CC BY 4.0
+  url: https://universe.roboflow.com/tim-4ijf0/drone-fire-detection-byija/dataset/1

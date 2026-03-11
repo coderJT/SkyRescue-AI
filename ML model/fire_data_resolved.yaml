@@ -1,0 +1,6 @@
+train: C:\Users\User\School\Hackathon\vhack-cs3\data\train\images
+val: C:\Users\User\School\Hackathon\vhack-cs3\data\valid\images
+test: C:\Users\User\School\Hackathon\vhack-cs3\data\test\images
+nc: 1
+names:
+- fire
