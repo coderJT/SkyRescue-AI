@@ -7,6 +7,7 @@ transport concerns, while the orchestrator continues to talk solely to MCP.
 from typing import Dict, Any, Optional
 
 from simulation.simulation_engine import SimulationEngine
+from config import settings as cfg
 
 
 class SimulationService:
@@ -107,3 +108,9 @@ class SimulationService:
             for sid, sdata in self.engine.sectors.items()
             if sdata.get("true_hazard") and sdata.get("true_hazard") != "clear"
         }
+
+    def update_settings(self, changes: Dict[str, Any]) -> Dict[str, Any]:
+        new_cfg = cfg.update(changes)
+        # Rebuild engine state to reflect new grid/hazard parameters
+        self.engine.__init__()  # re-init singleton fields
+        return new_cfg

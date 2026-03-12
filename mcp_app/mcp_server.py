@@ -14,9 +14,18 @@ Tools exposed:
   - Logging:         log_mission_event()
 """
 
+import os
+import sys
 from mcp.server.fastmcp import FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
+from starlette.responses import JSONResponse
+
+ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir))
+if ROOT not in sys.path:
+    sys.path.append(ROOT)
+
 from simulation.service import SimulationService
+from config import settings as cfg
 
 mcp = FastMCP("Rescue Drone Server", transport_security=TransportSecuritySettings(enable_dns_rebinding_protection=False))
 
@@ -28,6 +37,7 @@ def _world_with_truth():
     """Attach visualization-only ground truth to the world snapshot."""
     world = service.get_world_state()
     world["ground_truth_hazards"] = service.ground_truth_hazards()
+    world["settings"] = cfg.to_dict()
     return world
 
 
@@ -245,3 +255,43 @@ def get_mission_summary() -> dict:
     No-fly zones are excluded from coverage calculations.
     """
     return service.get_mission_summary()
+
+
+@mcp.tool()
+def get_settings() -> dict:
+    """Return current simulation/orchestrator tunable settings."""
+    return cfg.to_dict()
+
+
+@mcp.tool()
+def update_settings(changes: dict) -> dict:
+    """
+    Update simulation/orchestrator constants (e.g., drain_per_unit, scan_cost, fire_multiplier).
+    A mission reset is recommended after structural changes.
+    """
+    new_cfg = service.update_settings(changes)
+    return {"status": "updated", "settings": new_cfg}
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+#  HTTP SETTINGS ENDPOINTS (for UI)
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+async def http_get_settings(request):
+    return JSONResponse(cfg.to_dict())
+
+
+async def http_update_settings(request):
+    try:
+        payload = await request.json()
+    except Exception:
+        return JSONResponse({"error": "Invalid JSON"}, status_code=400)
+    new_cfg = service.update_settings(payload if isinstance(payload, dict) else {})
+    return JSONResponse({"status": "updated", "settings": new_cfg})
+
+
+def create_app():
+    app = mcp.sse_app()
+    app.add_route("/settings", http_get_settings, methods=["GET"])
+    app.add_route("/settings", http_update_settings, methods=["POST"])
+    return app

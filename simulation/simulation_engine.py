@@ -8,6 +8,7 @@ import time
 import random
 import traceback
 from drone.drone import Drone
+from config.settings import settings
 
 
 class SimulationEngine:
@@ -45,9 +46,9 @@ class SimulationEngine:
         }
 
         # Initialize the world grid
-        self.grid_size = 200
-        self.sector_cols = 10
-        self.sector_rows = 10
+        self.grid_size = settings.grid_size
+        self.sector_cols = settings.sector_cols
+        self.sector_rows = settings.sector_rows
         self.sector_width = self.grid_size / self.sector_cols
         self.sector_height = self.grid_size / self.sector_rows
         self.sectors = {}
@@ -92,14 +93,14 @@ class SimulationEngine:
 
         
 
-        self.smoke_multiplier = 1.5
+        self.smoke_multiplier = settings.smoke_multiplier
         # Discover initial base area (11x11 block)
 
         # --- Environment: Wind ---
         self.wind = {
-            "angle_deg": 45,  # 45 deg = NE (Wind blowing FROM SW TO NE)
-            "speed_kmh": 35,
-            "description": "Wind blowing towards North-East (45°)",
+            "angle_deg": settings.wind_angle_deg,  # 45 deg = NE (Wind blowing FROM SW TO NE)
+            "speed_kmh": settings.wind_speed_kmh,
+            "description": settings.wind_desc,
             "battery_multiplier_against": 1.3,
         }
 
@@ -168,7 +169,7 @@ class SimulationEngine:
     def _generate_random_survivors(self, count=None):
         """Randomly spawn survivors avoiding base camp."""
         self.survivors = []
-        num_survivors = count if count is not None else random.randint(7, 12)
+        num_survivors = count if count is not None else random.randint(settings.survivor_min, settings.survivor_max)
         for _ in range(num_survivors):
             # Try to pick a spot not in base camp (0,0) to (40,40) AND not in No-Fly Zone
             for _attempt in range(20): # Increased attempts
@@ -266,6 +267,10 @@ class SimulationEngine:
         drone.coordinates = (x, y, z)
         drone.status = status
         
+        # Passive hazard discovery + survivor ping on every telemetry update
+        discovered = drone.scan_surrounding(self.sectors)
+        self._passive_survivor_ping(drone_id)
+
         if clear_target:
             if drone.target_sector and drone.target_sector in self.sectors:
                 s = self.sectors[drone.target_sector]
@@ -275,7 +280,30 @@ class SimulationEngine:
                         s["status"] = "unscanned"
             drone.target_sector = None
             
-        return {"status": "success"}
+        return {"status": "success", "discovered": list(discovered.keys())}
+
+    def _passive_survivor_ping(self, drone_id: str, radius: float = 18.0):
+        """Lightweight survivor detection when drones move (no explicit scan)."""
+        if drone_id not in self.drones:
+            return
+        drone = self.drones[drone_id]
+        dx, _, dz = drone.coordinates
+        now = time.time()
+        elapsed = now - self.start_time - self.total_paused_duration
+
+        detected = []
+        for s_data in self.survivors:
+            if s_data["expired"] or elapsed >= s_data["limit"]:
+                continue
+            sx, _, sz = s_data["pos"]
+            dist = math.hypot(sx - dx, sz - dz)
+            if dist <= radius:
+                detected.append(s_data["pos"])
+
+        for s in detected:
+            if s not in self.discovered_survivors:
+                self.discovered_survivors.append(s)
+                self.log(f"🆘 PASSIVE DETECT: {drone_id} spotted survivor at {s}")
 
     def list_drones(self):
         return list(self.drones.keys())
@@ -315,6 +343,14 @@ class SimulationEngine:
             # Revert if sector invalid
             drone.target_sector = None
             return {"error": f"Sector {sector_id} not found"}
+
+        # Battery feasibility: ensure round-trip + scan + safety margin is possible
+        center = self.sectors[sector_id]["center"]
+        dist = math.hypot(center[0] - drone.coordinates[0], center[1] - drone.coordinates[2])
+        round_trip_cost = dist * 2 * settings.drain_per_unit + settings.scan_cost + settings.safety_margin
+        if drone.battery_remaining < round_trip_cost:
+            drone.target_sector = None
+            return {"error": f"Insufficient battery for {sector_id}: need ~{round_trip_cost:.1f}% but have {drone.battery_remaining:.1f}%"}
         
         # Update sector status - Note: Multiple drones COULD be assigned to one sector
         # but the sector only tracks the LAST one assigned for status purposes.
