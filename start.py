@@ -5,12 +5,20 @@ import time
 import webbrowser
 import uvicorn
 from starlette.middleware.cors import CORSMiddleware
-from mcp_app.mcp_server import mcp
+import sys
+import os
+
+# Ensure repo root is on sys.path for config/ imports
+ROOT = os.path.abspath(os.path.dirname(__file__))
+if ROOT not in sys.path:
+    sys.path.append(ROOT)
+
+from mcp_app.mcp_server import create_app
 
 def run_server_internal():
     """Starts the MCP server logic directly (merged from run_server.py)."""
-    # Get the Starlette SSE app from FastMCP
-    app = mcp.sse_app()
+    # Get the Starlette SSE app from FastMCP plus REST helpers
+    app = create_app()
 
     # Add CORS middleware so browsers can access the MCP server
     app.add_middleware(
