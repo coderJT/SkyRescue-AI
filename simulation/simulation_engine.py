@@ -7,7 +7,8 @@ import math
 import time
 import random
 import traceback
-from drone.drone import Drone
+from drone.Drone import Drone
+from simulation.thermal_model import ThermalHumanDetectionModel
 
 
 class SimulationEngine:
@@ -89,6 +90,7 @@ class SimulationEngine:
 
         # --- Discovered survivors (found during scans) ---
         self.discovered_survivors = []
+        self.discovered_survivor_confidence = {}
 
         
 
@@ -102,6 +104,10 @@ class SimulationEngine:
             "description": "Wind blowing towards North-East (45°)",
             "battery_multiplier_against": 1.3,
         }
+
+        # Lightweight thermal classifier used by sector scans.
+        self.thermal_model = ThermalHumanDetectionModel(threshold=0.60)
+        self.thermal_model_enabled = True
 
         # Mark no-fly zones as "scanned" (they can never be scanned)
         for sid in self.no_fly_sector_ids:
@@ -195,6 +201,7 @@ class SimulationEngine:
         """Reset mission timer, survivors, and sector states for a new run."""
         self.start_time = time.time()
         self.discovered_survivors = []
+        self.discovered_survivor_confidence = {}
         self.mission_log = []
         
         # Reset survivors
@@ -221,6 +228,8 @@ class SimulationEngine:
         """Called when the user clicks explicitly to start the simulation."""
         self.mission_status = "active"
         self.start_time = time.time()
+        self.discovered_survivors = []
+        self.discovered_survivor_confidence = {}
         self.paused = False
         self.pause_start_time = 0
         self.total_paused_duration = 0
@@ -383,7 +392,10 @@ class SimulationEngine:
                 "drones": drones_state,
                 "sectors": self.sectors,
                 "discovered_survivors": self.discovered_survivors,
+                "discovered_survivor_confidence": self.discovered_survivor_confidence,
                 "all_survivors": [s["pos"] for s in self.survivors],
+                "thermal_model_enabled": self.thermal_model_enabled,
+                "thermal_model_threshold": self.thermal_model.threshold,
                 "wind": self.wind,
                 "mission_log": self.mission_log[-20:], # Send last 20 events for sync
             }
@@ -452,14 +464,90 @@ class SimulationEngine:
         drone_x, _, drone_z = drone.coordinates
         current_sid = self._get_sector_at(drone_x, drone_z)
         
-        # Sector-based detection: find all active survivors in the current sector
+        # Build thermal signatures in this sector, then classify them as human/nonhuman.
         detected = []
+        detected_confidences = []
+        hazard_here = self.sectors[current_sid]["true_hazard"]
+
+        # Human candidate signatures (ground-truth survivors in this sector).
         for s_data in self.survivors:
             if s_data["expired"] or elapsed >= s_data["limit"]:
                 continue
-            sx, sy, sz = s_data["pos"]
-            if self._get_sector_at(sx, sz) == current_sid:
+            sx, _, sz = s_data["pos"]
+            if self._get_sector_at(sx, sz) != current_sid:
+                continue
+
+            distance = math.sqrt((sx - drone_x) ** 2 + (sz - drone_z) ** 2)
+            ambient_boost = 0.0
+            if hazard_here == "fire":
+                ambient_boost = random.uniform(2.0, 6.0)
+            elif hazard_here == "smoke":
+                ambient_boost = random.uniform(0.8, 2.5)
+
+            signature = {
+                "distance_u": distance,
+                "apparent_temp_c": random.uniform(33.0, 37.0) + ambient_boost - (0.08 * distance),
+                "shape_score": random.uniform(0.70, 0.97),
+                "motion_score": random.uniform(0.40, 0.90),
+                "flicker_score": random.uniform(0.03, 0.22),
+            }
+
+            if self.thermal_model_enabled:
+                confidence = self.thermal_model.predict_proba(signature)
+                if confidence >= self.thermal_model.threshold:
+                    detected.append(s_data["pos"])
+                    detected_confidences.append(confidence)
+            else:
+                # Fallback classic mode: deterministic sector match with basic confidence.
+                confidence = max(0.55, min(0.98, 0.92 - (0.01 * distance)))
                 detected.append(s_data["pos"])
+                detected_confidences.append(confidence)
+
+        # Non-human thermal clutter to make detection realistic in hazard zones.
+        # These are classified but never counted as survivors.
+        clutter_count = 0
+        if hazard_here == "fire":
+            clutter_count = random.randint(2, 4)
+        elif hazard_here == "smoke":
+            clutter_count = random.randint(1, 2)
+        else:
+            clutter_count = random.randint(0, 1)
+
+        sector = self.sectors[current_sid]
+        cx, cz = sector["center"]
+        for _ in range(clutter_count):
+            px = random.uniform(cx - self.sector_width / 2, cx + self.sector_width / 2)
+            pz = random.uniform(cz - self.sector_height / 2, cz + self.sector_height / 2)
+            distance = math.sqrt((px - drone_x) ** 2 + (pz - drone_z) ** 2)
+
+            if hazard_here == "fire":
+                signature = {
+                    "distance_u": distance,
+                    "apparent_temp_c": random.uniform(42.0, 78.0),
+                    "shape_score": random.uniform(0.05, 0.45),
+                    "motion_score": random.uniform(0.00, 0.25),
+                    "flicker_score": random.uniform(0.70, 1.00),
+                }
+            elif hazard_here == "smoke":
+                signature = {
+                    "distance_u": distance,
+                    "apparent_temp_c": random.uniform(28.0, 45.0),
+                    "shape_score": random.uniform(0.10, 0.55),
+                    "motion_score": random.uniform(0.00, 0.35),
+                    "flicker_score": random.uniform(0.35, 0.85),
+                }
+            else:
+                signature = {
+                    "distance_u": distance,
+                    "apparent_temp_c": random.uniform(24.0, 35.0),
+                    "shape_score": random.uniform(0.05, 0.45),
+                    "motion_score": random.uniform(0.00, 0.30),
+                    "flicker_score": random.uniform(0.10, 0.55),
+                }
+
+            # Intentionally discard output; this exercises the classifier on
+            # false-signature clutter without affecting survivor counts.
+            _ = self.thermal_model.predict_proba(signature)
         
         # Cost 1.0% battery for the scan (matching drone.py internal logic but handled here)
         drone.drain_battery(1.0)
@@ -467,10 +555,23 @@ class SimulationEngine:
         if multiplier > 1.0:
             drone.drain_battery(1.0 * (multiplier - 1))  # extra scan drain if in hazard
             
-        for s in detected:
+        for idx, s in enumerate(detected):
             if s not in self.discovered_survivors:
                 self.discovered_survivors.append(s)
-                self.log(f"🔥 NEW SURVIVOR FOUND by {drone_id} in {current_sid} at {s}!")
+                confidence = detected_confidences[idx] if idx < len(detected_confidences) else 0.5
+                sid_key = f"{s[0]},{s[2]}"
+                self.discovered_survivor_confidence[sid_key] = round(confidence, 3)
+                self.log(f"🔥 NEW SURVIVOR FOUND by {drone_id} in {current_sid} at {s}! (conf={confidence:.2f})")
+            else:
+                confidence = detected_confidences[idx] if idx < len(detected_confidences) else 0.5
+                sid_key = f"{s[0]},{s[2]}"
+                prev = self.discovered_survivor_confidence.get(sid_key, 0.0)
+                self.discovered_survivor_confidence[sid_key] = round(max(prev, confidence), 3)
+
+        detected_detail = []
+        for idx, s in enumerate(detected):
+            confidence = detected_confidences[idx] if idx < len(detected_confidences) else 0.5
+            detected_detail.append({"pos": list(s), "confidence": round(confidence, 3)})
                 
         return {
             "drone": drone_id,
@@ -478,7 +579,25 @@ class SimulationEngine:
             "sector": current_sid,
             "detected_count": len(detected),
             "detected": [list(s) for s in detected],
+            "detected_detail": detected_detail,
+            "thermal_model_enabled": self.thermal_model_enabled,
             "battery_after": round(drone.battery_remaining, 1),
+        }
+
+    def set_thermal_model_mode(self, enabled: bool):
+        self.thermal_model_enabled = bool(enabled)
+        mode = "MODEL" if self.thermal_model_enabled else "CLASSIC"
+        self.log(f"Thermal detection mode set to {mode}.")
+        return {
+            "status": "success",
+            "thermal_model_enabled": self.thermal_model_enabled,
+            "thermal_model_threshold": self.thermal_model.threshold,
+        }
+
+    def get_thermal_model_mode(self):
+        return {
+            "thermal_model_enabled": self.thermal_model_enabled,
+            "thermal_model_threshold": self.thermal_model.threshold,
         }
 
     def get_battery_status(self, drone_id):

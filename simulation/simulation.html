@@ -761,6 +761,9 @@
                     <button id="scan-toggle-btn" onclick="toggleScannedSectors()"
                         style="background:rgba(50,150,255,0.15);border-color:rgba(50,150,255,0.3);color:#66bbff; padding:3px 10px; border-radius:4px; font-size:10px; cursor:pointer; pointer-events:auto; border-width:1px; border-style:solid; transition:all 0.2s;">👁
                         Scanned (H)</button>
+                    <button id="thermal-model-btn" onclick="toggleThermalModelMode()"
+                        style="background:rgba(0,255,136,0.15);border-color:rgba(0,255,136,0.35);color:#66ffbb; padding:3px 10px; border-radius:4px; font-size:10px; cursor:pointer; pointer-events:auto; border-width:1px; border-style:solid; transition:all 0.2s;">🌡
+                        Thermal Model: ON</button>
                     <button id="daynight-btn" onclick="toggleDayNight()">🌙 Night [N]</button>
                     <button id="daynight-btn" onclick="location.reload()"
                         style="background:rgba(255,50,50,0.15);border-color:rgba(255,50,50,0.3);color:#ff6655">↻
@@ -887,6 +890,32 @@
         }, 2000);
 
         let showScannedSectors = false;
+        let thermalModelEnabled = true;
+
+        function setThermalModeButtonState() {
+            const btn = document.getElementById('thermal-model-btn');
+            if (!btn) return;
+            btn.textContent = thermalModelEnabled ? '🌡 Thermal Model: ON' : '🌡 Thermal Model: OFF';
+            btn.style.background = thermalModelEnabled ? 'rgba(0,255,136,0.15)' : 'rgba(255,170,0,0.15)';
+            btn.style.borderColor = thermalModelEnabled ? 'rgba(0,255,136,0.35)' : 'rgba(255,170,0,0.35)';
+            btn.style.color = thermalModelEnabled ? '#66ffbb' : '#ffcc66';
+        }
+
+        window.toggleThermalModelMode = function () {
+            const next = !thermalModelEnabled;
+            thermalModelEnabled = next;
+            setThermalModeButtonState();
+
+            if (mcpClient && mcpClient.connected) {
+                mcpClient.callTool('set_thermal_model_mode', { enabled: next })
+                    .catch(e => console.warn('Failed to set thermal mode:', e));
+            }
+
+            addThought(-1, 'info', `Thermal detection mode switched to ${next ? 'MODEL' : 'CLASSIC'}.`);
+        };
+
+        setThermalModeButtonState();
+
         window.toggleScannedSectors = function () {
             showScannedSectors = !showScannedSectors;
             const btn = document.getElementById('scan-toggle-btn');
@@ -923,6 +952,16 @@
             if (FIRE.has(k)) return "fire";
             if (SMOKE.has(k)) return "smoke";
             return "clear";
+        }
+
+        function confidenceToColorHex(conf) {
+            const c = Math.max(0, Math.min(1, conf));
+            const low = { r: 255, g: 120, b: 60 };
+            const high = { r: 0, g: 255, b: 120 };
+            const r = Math.round(low.r + (high.r - low.r) * c);
+            const g = Math.round(low.g + (high.g - low.g) * c);
+            const b = Math.round(low.b + (high.b - low.b) * c);
+            return (r << 16) | (g << 8) | b;
         }
 
         // ─── OBSTACLE REGISTRY (for collision avoidance) ───
@@ -1909,10 +1948,15 @@
                         const wavePulse = 1 + Math.sin(elapsed * 3 + i * 2) * 0.15;
                         s.body.scale.set(wavePulse, 1, wavePulse);
                     } else if (s.ring) {
-                        // Found survivors: celebrating bounce + ring pulse
+                        // Found survivors: confidence-driven pulse intensity and color
+                        const conf = s.confidence ?? 0.75;
+                        const ringColor = confidenceToColorHex(conf);
                         s.body.position.y = 0.8 + Math.abs(Math.sin(elapsed * 2 + i)) * 0.5;
-                        s.ring.scale.setScalar(1 + Math.sin(elapsed * 2 + i) * 0.3);
-                        s.ring.material.opacity = 0.2 + Math.sin(elapsed * 3 + i) * 0.15;
+                        s.ring.material.color.setHex(ringColor);
+                        s.ring.scale.setScalar(1 + Math.sin(elapsed * 2 + i) * (0.18 + conf * 0.25));
+                        s.ring.material.opacity = 0.12 + Math.sin(elapsed * 3 + i) * (0.08 + conf * 0.14);
+                        s.body.material.emissive.setHex(ringColor);
+                        s.body.material.emissiveIntensity = 0.35 + conf * 0.65;
                     }
                 });
 
@@ -2424,6 +2468,11 @@
                     serverMetrics.scanned = world.sectors_scanned;
                     serverMetrics.scannable = world.total_scannable_sectors;
 
+                    if (typeof world.thermal_model_enabled === 'boolean') {
+                        thermalModelEnabled = world.thermal_model_enabled;
+                        setThermalModeButtonState();
+                    }
+
                     // Sync Mission Completion
                     if (world.mission_complete && !missionComplete) {
                         missionComplete = true;
@@ -2447,10 +2496,13 @@
                     if (world.all_survivors) {
                         totalFound = world.found_survivors; // Sync HUD counter
                         const discoveredSet = new Set((world.discovered_survivors || []).map(p => `${p[0]},${p[2]}`));
+                        const discoveredConfidence = world.discovered_survivor_confidence || {};
 
                         world.all_survivors.forEach(pos => {
                             const id = `${pos[0]},${pos[2]}`;
                             const isDiscovered = discoveredSet.has(id);
+                            const confidence = discoveredConfidence[id] ?? 0.75;
+                            const confColor = confidenceToColorHex(confidence);
 
                             // Check if we already have a mesh at this pos
                             let existing = survivorMeshes.find(m => Math.abs(m.body.position.x - pos[0]) < 0.5 && Math.abs(m.body.position.z - pos[2]) < 0.5);
@@ -2461,8 +2513,8 @@
                                 const mesh = new THREE.Mesh(
                                     new THREE.SphereGeometry(isDiscovered ? 0.8 : 0.4, 12, 12),
                                     new THREE.MeshStandardMaterial({
-                                        color: color,
-                                        emissive: color,
+                                        color: isDiscovered ? confColor : color,
+                                        emissive: isDiscovered ? confColor : color,
                                         emissiveIntensity: isDiscovered ? 0.7 : 0.4,
                                         roughness: 0.3
                                     })
@@ -2472,25 +2524,26 @@
 
                                 let ring = null;
                                 if (isDiscovered) {
-                                    ring = new THREE.Mesh(new THREE.TorusGeometry(1.4, 0.08, 8, 24), new THREE.MeshBasicMaterial({ color: 0x00ff44, transparent: true, opacity: 0.3 }));
+                                    ring = new THREE.Mesh(new THREE.TorusGeometry(1.4, 0.08, 8, 24), new THREE.MeshBasicMaterial({ color: confColor, transparent: true, opacity: 0.3 }));
                                     ring.rotation.x = -Math.PI / 2; ring.position.set(pos[0], 0.2, pos[2]); scene.add(ring);
                                 }
 
-                                survivorMeshes.push({ body: mesh, ring, found: isDiscovered, pos_id: id });
+                                survivorMeshes.push({ body: mesh, ring, found: isDiscovered, pos_id: id, confidence: confidence });
 
                                 // Add to SURVIVORS array for minimap
                                 SURVIVORS.push({ x: pos[0], y: pos[1], z: pos[2], found: isDiscovered });
                             } else if (isDiscovered && !existing.found) {
                                 // TRANSITION: Unfound (Red) -> Found (Green)
                                 existing.found = true;
-                                existing.body.material.color.setHex(0x00ff44);
-                                existing.body.material.emissive.setHex(0x00ff44);
+                                existing.confidence = confidence;
+                                existing.body.material.color.setHex(confColor);
+                                existing.body.material.emissive.setHex(confColor);
                                 existing.body.material.emissiveIntensity = 0.7;
                                 existing.body.scale.setScalar(2); // Make it larger (0.4 -> 0.8)
                                 existing.body.position.y = 0.8;
 
                                 // Add Pulsing Ring
-                                const ring = new THREE.Mesh(new THREE.TorusGeometry(1.4, 0.08, 8, 24), new THREE.MeshBasicMaterial({ color: 0x00ff44, transparent: true, opacity: 0.3 }));
+                                const ring = new THREE.Mesh(new THREE.TorusGeometry(1.4, 0.08, 8, 24), new THREE.MeshBasicMaterial({ color: confColor, transparent: true, opacity: 0.3 }));
                                 ring.rotation.x = -Math.PI / 2; ring.position.set(pos[0], 0.2, pos[2]); scene.add(ring);
                                 existing.ring = ring;
 
@@ -2500,6 +2553,14 @@
                                     return sid === id;
                                 });
                                 if (m) m.found = true;
+                            } else if (isDiscovered && existing.found) {
+                                // Confidence can improve over repeated scans.
+                                existing.confidence = Math.max(existing.confidence || 0.0, confidence);
+                                existing.body.material.color.setHex(confidenceToColorHex(existing.confidence));
+                                existing.body.material.emissive.setHex(confidenceToColorHex(existing.confidence));
+                                if (existing.ring) {
+                                    existing.ring.material.color.setHex(confidenceToColorHex(existing.confidence));
+                                }
                             }
                         });
                     }

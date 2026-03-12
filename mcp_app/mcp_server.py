@@ -164,6 +164,30 @@ def thermal_scan(drone_id: str) -> dict:
 
 
 @mcp.tool()
+def set_thermal_model_mode(enabled: bool) -> dict:
+    """
+    Enable or disable model-based thermal human detection.
+    enabled=True  -> model classifier mode
+    enabled=False -> classic sector-match mode
+    """
+    try:
+        return engine.set_thermal_model_mode(enabled)
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@mcp.tool()
+def get_thermal_model_mode() -> dict:
+    """
+    Get the current thermal detection mode and threshold.
+    """
+    try:
+        return engine.get_thermal_model_mode()
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@mcp.tool()
 def recall_for_charging(drone_id: str) -> dict:
     """
     Recall a drone to base for emergency recharging.
