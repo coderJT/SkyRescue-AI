@@ -519,6 +519,12 @@ async def run_orchestrator(session):
                     entries = "; ".join(f"{r['id']}({r['hazard']},{r['distance']}u,cost:{r.get('battery_cost','?')}%,remaining:{r.get('battery_after','?')}%)" for r in recs)
                     rec_lines.append(f"  {did}: {entries}")
 
+                # Build list of ALL currently assigned sectors (busy drones + idle drones)
+                assigned_sectors_all = set()
+                for did, d in drones.items():
+                    if isinstance(d, dict) and d.get('target_sector'):
+                        assigned_sectors_all.add(d['target_sector'])
+
                 wind = world.get('wind', {})
                 wind_desc = wind.get('description', 'Unknown')
 
@@ -531,11 +537,13 @@ FLEET:
 CANDIDATES (id, hazard, distance, cost: Y%, remaining: Z%):
 {chr(10).join(rec_lines)}
 
-RULES: 
-1. Assign 1 unique sector per drone. Minimize travel. Never duplicate sectors. 
-2. RECALL ONLY IF bat < 25%, OR if the drone's CANDIDATES list is completely empty. 
-3. BATTERY FEASIBILITY: All provided candidates are ALREADY VERIFIED to have enough battery for a safe round-trip. DO NOT second-guess battery feasibility. DO NOT recall a drone if it has valid candidates.
-4. REASONING MUST BE SPECIFIC: explicitly mention battery %, round-trip cost, distance, hazard type (or "frontier exploration" if unexplored), wind, and the provided arrival comparison (e.g. "fastest to reach" or "faster than drone_x by Y ETA").
+RULES:
+1. Assign 1 unique sector per drone. Minimize travel. NEVER duplicate sectors.
+2. ALREADY ASSIGNED SECTORS (by other busy drones): {list(assigned_sectors_all) if assigned_sectors_all else "None"}
+   - You MUST NOT assign these sectors to any idle drone. Choose different sectors from the CANDIDATES list.
+3. RECALL ONLY IF bat < 25%, OR if the drone's CANDIDATES list is completely empty.
+4. BATTERY FEASIBILITY: All provided candidates are ALREADY VERIFIED to have enough battery for a safe round-trip. DO NOT second-guess battery feasibility. DO NOT recall a drone if it has valid candidates.
+5. REASONING MUST BE SPECIFIC: explicitly mention battery %, round-trip cost, distance, hazard type (or "frontier exploration" if unexplored), wind, and the provided arrival comparison (e.g. "fastest to reach" or "faster than drone_x by Y ETA").
 
 JSON ONLY:
 {{"strategy":"1 detailed sentence mentioning distances and battery feasibility","assignments":{{"drone_id":{{"sector":"SID","reason":"1 detailed sentence mentioning specific distance, round-trip battery cost, remaining battery after return, hazard status, and the explicitly provided fleet arrival comparison (fastest to reach, fallback, etc)"}}}}}}"""

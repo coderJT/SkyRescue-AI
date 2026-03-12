@@ -148,6 +148,15 @@
             flex-shrink: 0;
         }
 
+        .legend-x {
+            width: 12px;
+            text-align: center;
+            font-size: 10px;
+            font-weight: bold;
+            color: #000000;
+            flex-shrink: 0;
+        }
+
         #minimap {
             width: 260px;
             height: 260px;
@@ -721,6 +730,10 @@
                             <div class="legend-circle" style="background: #00ff44; box-shadow: 0 0 4px #00ff44;"></div>
                             <span>Rescued</span>
                         </div>
+                        <div class="legend-item">
+                            <div class="legend-x">✕</div>
+                            <span>Dead</span>
+                        </div>
                         <div class="legend-item" style="margin-top: 4px;">
                             <div class="legend-box" style="background: #3388ff; border-radius: 50%;"></div>
                             <span>Drone</span>
@@ -1202,12 +1215,51 @@
                 mapCtx.beginPath(); mapCtx.arc(ox, oy, 1.5, 0, Math.PI * 2); mapCtx.fill();
             });
             // Survivors
-            SURVIVORS.forEach((s, i) => {
+            SURVIVORS.forEach((s) => {
                 const sx = MAP_PAD + (s.x / GRID) * (MAP_W - MAP_PAD * 2);
                 const sy = MAP_PAD + (s.z / GRID) * (MAP_H - MAP_PAD * 2);
-                mapCtx.beginPath(); mapCtx.arc(sx, sy, 3, 0, Math.PI * 2);
-                mapCtx.fillStyle = survivorMeshes[i]?.found ? '#00ff44' : '#ff3300'; mapCtx.fill();
-                if (!survivorMeshes[i]?.found) { mapCtx.beginPath(); mapCtx.arc(sx, sy, 5, 0, Math.PI * 2); mapCtx.strokeStyle = '#ff440044'; mapCtx.lineWidth = 1; mapCtx.stroke(); }
+
+                // Find matching survivor mesh by position
+                const matchingMesh = survivorMeshes.find(m => {
+                    return Math.abs(m.body.position.x - s.x) < 0.5 &&
+                           Math.abs(m.body.position.z - s.z) < 0.5;
+                });
+
+                // Check if survivor is expired/dead
+                const isExpired = matchingMesh?.expired === true || s.expired === true;
+                const isFound = matchingMesh?.found === true || s.found === true;
+
+                if (isExpired) {
+                    // Draw X for dead survivors
+                    const size = 4;
+                    mapCtx.beginPath();
+                    mapCtx.strokeStyle = '#000000';
+                    mapCtx.lineWidth = 2;
+                    // Draw X
+                    mapCtx.moveTo(sx - size, sy - size);
+                    mapCtx.lineTo(sx + size, sy + size);
+                    mapCtx.moveTo(sx + size, sy - size);
+                    mapCtx.lineTo(sx - size, sy + size);
+                    mapCtx.stroke();
+                } else if (isFound) {
+                    // Green circle for found survivors
+                    mapCtx.beginPath();
+                    mapCtx.arc(sx, sy, 3, 0, Math.PI * 2);
+                    mapCtx.fillStyle = '#00ff44';
+                    mapCtx.fill();
+                } else {
+                    // Red circle for unfound survivors
+                    mapCtx.beginPath();
+                    mapCtx.arc(sx, sy, 3, 0, Math.PI * 2);
+                    mapCtx.fillStyle = '#ff3300';
+                    mapCtx.fill();
+                    // Pulse ring for unfound
+                    mapCtx.beginPath();
+                    mapCtx.arc(sx, sy, 5, 0, Math.PI * 2);
+                    mapCtx.strokeStyle = '#ff440044';
+                    mapCtx.lineWidth = 1;
+                    mapCtx.stroke();
+                }
             });
             // Drone paths + positions
             drones.forEach((d, i) => {
@@ -2201,25 +2253,45 @@
                                 }
                             }
 
-                            // 3. OPPORTUNISTIC RESCUE (original behaviour)
-                            //    Passing through an unscanned sector that has known unfound survivors → stop & scan.
-                            //    Skipped if already diverted by fire logic.
+                            // 3. OPPORTUNISTIC RESCUE (RESTRICTED)
+                            //    Only stop for survivors that are reasonably close to the direct path to target
+                            //    This prevents the swarm from stopping tile-by-tile across the map
                             if (!d._originalTarget && d.target.sector !== currentSector
                                 && sectorMeshes[currentSector] && !sectorMeshes[currentSector].scanned) {
+                                // Check for unfound survivors in this sector
                                 const hasUnfoundSurvivors = SURVIVORS.some(s => {
                                     if (s.found) return false;
                                     const sr = Math.floor(s.z / CELL), sc = Math.floor(s.x / CELL);
                                     return sr === curR && sc === curC;
                                 });
+                                
+                                // ONLY stop for survivors if:
+                                // 1. Survivors are actually found AND
+                                // 2. The drone is reasonably close to its target (within 3 sectors) OR
+                                // 3. The survivor is in a sector that's strategically important
                                 if (hasUnfoundSurvivors) {
-                                    addThought(i, 'alert', `SIGNAL DETECTED! Intercepting survivors in ${currentSector} while en route to ${d.target.sector}...`);
-                                    d._originalTarget = d.target;
-                                    d.target = { x: curC * CELL + CELL / 2, z: curR * CELL + CELL / 2, sector: currentSector };
-                                    d.state = "scanning";
-                                    d.scanTimer = 0;
-                                    addMCP(i, 'call', 'thermal_scan', { drone_id: `drone_${i + 1}`, sector: currentSector }, { status: 'intercepting_rescue' });
-                                    return; // Stop moving this frame
+                                    // Calculate distance to target in sectors
+                                    if (d.target.sector) {
+                                        const targetParts = d.target.sector.split('_');
+                                        const targetR = parseInt(targetParts[0].substring(1));
+                                        const targetC = parseInt(targetParts[1]);
+                                        const sectorDist = Math.abs(curR - targetR) + Math.abs(curC - targetC);
+                                        
+                                        // Only stop for opportunistic rescue if we're close to target (within 3 sectors)
+                                        // or if explicitly configured to be more aggressive
+                                        if (sectorDist <= 3) {
+                                            addThought(i, 'alert', `SIGNAL DETECTED! Intercepting survivors in ${currentSector} while en route to ${d.target.sector}...`);
+                                            d._originalTarget = d.target;
+                                            d.target = { x: curC * CELL + CELL / 2, z: curR * CELL + CELL / 2, sector: currentSector };
+                                            d.state = "scanning";
+                                            d.scanTimer = 0;
+                                            addMCP(i, 'call', 'thermal_scan', { drone_id: `drone_${i + 1}`, sector: currentSector }, { status: 'intercepting_rescue' });
+                                            return; // Stop moving this frame to rescue survivors
+                                        }
+                                        // If too far from target, continue moving (don't stop for distant survivors)
+                                    }
                                 }
+                                // If no survivors found or too far from target, continue moving to assigned target
                             }
 
                             // Smart RTB: estimate battery needed to return.
@@ -2610,7 +2682,10 @@
                         totalFound = world.found_survivors; // Sync HUD counter
                         const discoveredSet = new Set((world.discovered_survivors || []).map(p => `${p[0]},${p[2]}`));
 
-                        world.all_survivors.forEach(pos => {
+                        world.all_survivors.forEach(survivor => {
+                            // Handle both old format (array) and new format (object with pos/expired)
+                            const pos = survivor.pos || survivor;
+                            const isExpired = survivor.expired || false;
                             const id = `${pos[0]},${pos[2]}`;
                             const isDiscovered = discoveredSet.has(id);
 
@@ -2618,31 +2693,97 @@
                             let existing = survivorMeshes.find(m => Math.abs(m.body.position.x - pos[0]) < 0.5 && Math.abs(m.body.position.z - pos[2]) < 0.5);
 
                             if (!existing) {
-                                // Create NEW visual (Red = Unfound, Green = Found)
-                                const color = isDiscovered ? 0x00ff44 : 0xff3300;
+                                // Create NEW visual
+                                // Red = Unfound, Green = Found, Gray/Black X = Expired/Dead
+                                let color, geometry, scale;
+                                if (isExpired) {
+                                    color = 0x444444; // Gray for dead
+                                    geometry = new THREE.BoxGeometry(0.6, 0.6, 0.6); // X shape using box
+                                    scale = 1;
+                                } else if (isDiscovered) {
+                                    color = 0x00ff44; // Green for found
+                                    geometry = new THREE.SphereGeometry(0.8, 12, 12);
+                                    scale = 1;
+                                } else {
+                                    color = 0xff3300; // Red for unfound
+                                    geometry = new THREE.SphereGeometry(0.4, 12, 12);
+                                    scale = 1;
+                                }
+
                                 const mesh = new THREE.Mesh(
-                                    new THREE.SphereGeometry(isDiscovered ? 0.8 : 0.4, 12, 12),
+                                    geometry,
                                     new THREE.MeshStandardMaterial({
                                         color: color,
                                         emissive: color,
-                                        emissiveIntensity: isDiscovered ? 0.7 : 0.4,
+                                        emissiveIntensity: isExpired ? 0.1 : (isDiscovered ? 0.7 : 0.4),
                                         roughness: 0.3
                                     })
                                 );
-                                mesh.position.set(pos[0], isDiscovered ? 0.8 : 0.4, pos[2]);
+
+                                // For expired survivors, rotate to form an X
+                                if (isExpired) {
+                                    mesh.rotation.x = Math.PI / 4;
+                                    mesh.rotation.y = Math.PI / 4;
+                                    mesh.position.set(pos[0], 0.5, pos[2]);
+                                } else {
+                                    mesh.position.set(pos[0], isDiscovered ? 0.8 : 0.4, pos[2]);
+                                }
+
                                 scene.add(mesh);
 
                                 let ring = null;
-                                if (isDiscovered) {
+                                if (isDiscovered && !isExpired) {
                                     ring = new THREE.Mesh(new THREE.TorusGeometry(1.4, 0.08, 8, 24), new THREE.MeshBasicMaterial({ color: 0x00ff44, transparent: true, opacity: 0.3 }));
                                     ring.rotation.x = -Math.PI / 2; ring.position.set(pos[0], 0.2, pos[2]); scene.add(ring);
                                 }
 
-                                survivorMeshes.push({ body: mesh, ring, found: isDiscovered, pos_id: id });
+                                survivorMeshes.push({ body: mesh, ring, found: isDiscovered, expired: isExpired, pos_id: id });
 
                                 // Add to SURVIVORS array for minimap
-                                SURVIVORS.push({ x: pos[0], y: pos[1], z: pos[2], found: isDiscovered });
-                            } else if (isDiscovered && !existing.found) {
+                                SURVIVORS.push({ x: pos[0], y: pos[1], z: pos[2], found: isDiscovered, expired: isExpired });
+                            } else if (!existing.expired && isExpired) {
+                                // TRANSITION: Alive -> Dead (Expired)
+                                existing.expired = true;
+                                existing.body.material.color.setHex(0x444444);
+                                existing.body.material.emissive.setHex(0x444444);
+                                existing.body.material.emissiveIntensity = 0.1;
+
+                                // Change geometry to X shape (box)
+                                const oldPos = existing.body.position.clone();
+                                scene.remove(existing.body);
+
+                                const newMesh = new THREE.Mesh(
+                                    new THREE.BoxGeometry(0.6, 0.6, 0.6),
+                                    new THREE.MeshStandardMaterial({
+                                        color: 0x444444,
+                                        emissive: 0x444444,
+                                        emissiveIntensity: 0.1,
+                                        roughness: 0.3
+                                    })
+                                );
+                                newMesh.rotation.x = Math.PI / 4;
+                                newMesh.rotation.y = Math.PI / 4;
+                                newMesh.position.copy(oldPos);
+                                newMesh.position.y = 0.5;
+                                scene.add(newMesh);
+                                existing.body = newMesh;
+
+                                // Remove ring if exists
+                                if (existing.ring) {
+                                    scene.remove(existing.ring);
+                                    existing.ring = null;
+                                }
+
+                                // Sync Minimap - update the SURVIVORS array
+                                const m = SURVIVORS.find(s => {
+                                    const sid = `${s.x},${s.z}`;
+                                    return sid === id;
+                                });
+                                if (m) {
+                                    m.expired = true;
+                                    console.log(`💀 Survivor at ${id} marked as EXPIRED in minimap`);
+                                }
+                            } else if (isDiscovered && !existing.found && !isExpired) {
                                 // TRANSITION: Unfound (Red) -> Found (Green)
                                 existing.found = true;
                                 existing.body.material.color.setHex(0x00ff44);
@@ -2662,6 +2803,29 @@
                                     return sid === id;
                                 });
                                 if (m) m.found = true;
+                            }
+                        });
+
+                        // Direct sync: Ensure SURVIVORS array matches world state expired status
+                        world.all_survivors.forEach(survivor => {
+                            const pos = survivor.pos || survivor;
+                            const isExpired = survivor.expired || false;
+                            const id = `${pos[0]},${pos[2]}`;
+
+                            // Update SURVIVORS array
+                            const s = SURVIVORS.find(sv => {
+                                const sid = `${sv.x},${sv.z}`;
+                                return sid === id;
+                            });
+                            if (s && s.expired !== isExpired) {
+                                s.expired = isExpired;
+                                if (isExpired) console.log(`💀 Synced dead survivor at ${id} to minimap`);
+                            }
+
+                            // Update survivorMeshes array
+                            const sm = survivorMeshes.find(m => m.pos_id === id);
+                            if (sm && sm.expired !== isExpired) {
+                                sm.expired = isExpired;
                             }
                         });
                     }

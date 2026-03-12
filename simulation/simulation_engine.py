@@ -359,6 +359,12 @@ class SimulationEngine:
             found = len(self.discovered_survivors)
             total_needed = len(self.survivors)
 
+            # Update survivor expired status
+            for s_data in self.survivors:
+                if not s_data["expired"] and elapsed >= s_data["limit"]:
+                    s_data["expired"] = True
+                    self.log(f"💀 SURVIVOR DIED at {s_data['pos']} - time limit exceeded!")
+
             # Update mission status
             if self.mission_status == "active":
                 # Success: All scannable sectors are scanned
@@ -383,7 +389,7 @@ class SimulationEngine:
                 "drones": drones_state,
                 "sectors": self.sectors,
                 "discovered_survivors": self.discovered_survivors,
-                "all_survivors": [s["pos"] for s in self.survivors],
+                "all_survivors": [{"pos": s["pos"], "expired": s["expired"]} for s in self.survivors],
                 "wind": self.wind,
                 "mission_log": self.mission_log[-20:], # Send last 20 events for sync
             }
