@@ -355,6 +355,64 @@ class AssignmentTracker:
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+#  STATE HELPERS (keep main loop lean)
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+def summarize_hazards(sectors):
+    """Return discovered fire and smoke sector IDs (excluding scanned)."""
+    fire = [
+        sid for sid, s in sectors.items()
+        if isinstance(s, dict) and s.get('discovered') and s.get('hazard') == 'fire' and not s.get('scanned')
+    ]
+    smoke = [
+        sid for sid, s in sectors.items()
+        if isinstance(s, dict) and s.get('discovered') and s.get('hazard') == 'smoke' and not s.get('scanned')
+    ]
+    return fire, smoke
+
+
+def select_idle_drones(drones, sectors, urgent_needs):
+    """
+    Pick drones eligible for reassignment:
+      - idle/waiting with no target or recall target
+      - can be interrupted if moving toward non-hazard while urgent hazards exist
+      - recalls can be redirected mid-flight
+    """
+    available = []
+    for did, d in drones.items():
+        if not isinstance(d, dict):
+            continue
+        status = d.get('status', '').lower()
+        target = d.get('target_sector')
+
+        if status in ['active', 'idle', 'waiting_orders']:
+            if not target or target == "__RECALL__":
+                available.append(did)
+            elif urgent_needs > 0:
+                t_sector = sectors.get(target, {})
+                if isinstance(t_sector, dict) and t_sector.get('hazard', 'unknown') not in ['fire', 'smoke']:
+                    available.append(did)
+        elif status == 'moving' and target == '__RECALL__':
+            available.append(did)
+    return available
+
+
+def print_swarm_status(drones, idle_ids):
+    """Compact console dump used before LLM call."""
+    print("\n--- SWARM STATUS ---")
+    for did, d in drones.items():
+        if not isinstance(d, dict):
+            continue
+        target = d.get('target_sector', 'None')
+        bat = round(d.get('battery', 0), 1)
+        pos = d.get('coordinates', [0, 0, 0])
+        status = d.get('status', '?').upper()
+        state = "IDLE" if did in idle_ids else status
+        print(f"  {did}: {state} | Bat: {bat}% | Pos({round(pos[0])},{round(pos[2])}) | Target: {target}")
+    print("--------------------\n")
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 #  ORCHESTRATOR MAIN LOOP
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -409,33 +467,10 @@ async def run_orchestrator(session):
                 continue
 
             # ── Step 2: Identify idle and reassignable drones ──
-            # Check for urgent hazards that might warrant interrupting low-priority missions
-            discovered_fire = [sid for sid, s in sectors.items()
-                               if isinstance(s, dict) and s.get('discovered') and s.get('hazard') == 'fire' and not s.get('scanned')]
-            discovered_smoke = [sid for sid, s in sectors.items()
-                                if isinstance(s, dict) and s.get('discovered') and s.get('hazard') == 'smoke' and not s.get('scanned')]
+            discovered_fire, discovered_smoke = summarize_hazards(sectors)
             urgent_needs = len(discovered_fire) + len(discovered_smoke)
 
-            available = []
-            for did, d in drones.items():
-                if not isinstance(d, dict):
-                    continue
-                s = d.get('status', '').lower()
-                target = d.get('target_sector')
-                if s in ['active', 'idle', 'waiting_orders']:
-                    if not target or target == "__RECALL__":
-                        available.append(did)  # Truly idle or recalled
-                    elif urgent_needs > 0:
-                        # Allow interruption: if drone is heading to clear/unknown, it can be reassigned to fire
-                        t_sector = sectors.get(target, {})
-                        if isinstance(t_sector, dict):
-                            t_haz = t_sector.get('hazard', 'unknown')
-                            if t_haz not in ['fire', 'smoke']:
-                                available.append(did)
-                elif s == 'moving' and target == '__RECALL__':
-                    # Drone heading back to base for recall — redirect it instead
-                    available.append(did)
-
+            available = select_idle_drones(drones, sectors, urgent_needs)
             idle_drone_ids = tracker.filter_idle(available)
 
             # No idle drones → skip
@@ -486,14 +521,7 @@ async def run_orchestrator(session):
                 continue
 
             # ── Step 5: LLM Strategic Coordination ──
-            print("\n--- SWARM STATUS ---")
-            for did, d in drones.items():
-                if not isinstance(d, dict):
-                    continue
-                target = d.get('target_sector', 'None')
-                bat = round(d.get('battery', 0), 1)
-                print(f"  {did}: {d.get('status','?').upper()} | Bat: {bat}% | Target: {target}")
-            print("--------------------\n")
+            print_swarm_status(drones, idle_drone_ids)
 
             print(f"🧠 Coordinating {len(idle_drone_ids)} idle drones...")
             last_llm_time = now
