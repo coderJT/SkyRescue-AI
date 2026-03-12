@@ -340,8 +340,8 @@
             border-radius: 8px;
             padding: 12px 16px;
             min-width: 260px;
-            max-height: 220px;
-            overflow-y: auto;
+            max-height: none; /* allow panel to grow to fit content */
+            overflow-y: visible; /* remove scrolling bar */
             color: #ccd;
             font-size: 11px;
             pointer-events: auto;
@@ -421,34 +421,37 @@
 
         #alert-box {
             position: absolute;
-            bottom: 12px;
-            right: 12px;
-            background: rgba(118, 255, 3, 0.12);
-            border: 1px solid rgba(118, 255, 3, 0.4);
-            border-radius: 8px;
-            padding: 10px 14px;
-            color: #76ff03;
-            font-size: 11px;
-            font-weight: 600;
+            top: 55px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(0, 18, 8, 0.96);
+            border: 2px solid #00ff88;
+            border-radius: 14px;
+            padding: 14px 36px;
+            color: #00ff88;
+            font-size: 16px;
+            font-weight: 700;
             display: none;
-            max-width: 200px;
+            text-align: center;
+            white-space: nowrap;
+            box-shadow: 0 0 32px rgba(0, 255, 136, 0.55), 0 6px 24px rgba(0,0,0,0.6);
+            letter-spacing: 2px;
+            text-transform: uppercase;
+            pointer-events: none;
+            z-index: 50;
         }
 
         #alert-box.show {
             display: block;
-            animation: ap 1s infinite;
+            animation: survivorPop 3s ease forwards;
         }
 
-        @keyframes ap {
-
-            0%,
-            100% {
-                box-shadow: 0 0 8px rgba(118, 255, 3, 0.2)
-            }
-
-            50% {
-                box-shadow: 0 0 20px rgba(118, 255, 3, 0.4)
-            }
+        @keyframes survivorPop {
+            0%   { opacity: 0; transform: translateX(-50%) scale(0.75); }
+            12%  { opacity: 1; transform: translateX(-50%) scale(1.06); }
+            22%  { transform: translateX(-50%) scale(1); }
+            70%  { opacity: 1; transform: translateX(-50%) scale(1); }
+            100% { opacity: 0; transform: translateX(-50%) scale(0.95); }
         }
 
         #instr {
@@ -768,7 +771,7 @@
                 </div>
             </div>
         </div>
-        <div id="alert-box">🔥 SURVIVOR DETECTED</div>
+        <div id="alert-box"></div>
         <div id="instr">Press 0-5 to switch cameras · Click+Drag to orbit</div>
 
         <div id="start-controls">
@@ -1177,15 +1180,18 @@
                 const h = hazardOf(r, c), scanned = sectorMeshes[`S${r}_${c}`]?.scanned;
                 let fill = '#1a3a1a';
                 if (h === 'no_fly') fill = '#222';
-                else if (h === 'fire') fill = scanned ? '#3a2210' : '#441100';
-                else if (h === 'smoke') fill = scanned ? '#2a2a18' : '#332810';
-                else fill = scanned ? '#1a3a2a' : '#1a2a1a';
+                else if (h === 'fire') fill = scanned ? '#663300' : '#441100';
+                else if (h === 'smoke') fill = scanned ? '#1a4a2a' : '#332810';
+                else fill = scanned ? '#006633' : '#1a2a1a';
                 const x = MAP_PAD + c * MAP_CELL, y = MAP_PAD + r * MAP_CELL;
                 mapCtx.fillStyle = fill;
                 mapCtx.fillRect(x + 1, y + 1, MAP_CELL - 2, MAP_CELL - 2);
                 mapCtx.strokeStyle = '#2a3a2a'; mapCtx.lineWidth = 0.5;
                 mapCtx.strokeRect(x + 1, y + 1, MAP_CELL - 2, MAP_CELL - 2);
-                if (scanned && h !== 'no_fly') { mapCtx.fillStyle = '#33aa3322'; mapCtx.fillRect(x + 1, y + 1, MAP_CELL - 2, MAP_CELL - 2); }
+                if (scanned && h !== 'no_fly') {
+                    mapCtx.fillStyle = h === 'fire' ? 'rgba(255,120,0,0.28)' : 'rgba(0,255,100,0.35)';
+                    mapCtx.fillRect(x + 1, y + 1, MAP_CELL - 2, MAP_CELL - 2);
+                }
                 if (h === 'fire') { mapCtx.fillStyle = '#ff440066'; mapCtx.font = '12px sans-serif'; mapCtx.fillText('🔥', x + MAP_CELL / 2 - 7, y + MAP_CELL / 2 + 5); }
             }
             // Obstacles as tiny dots on the map
@@ -1811,11 +1817,34 @@
             }
         };
 
+        // Manual RTB — force a drone back to the charging station immediately
+        window.recallDrone = function (idx) {
+            const d = drones[idx];
+            if (!d || d.dead || d.recharging) return;
+            // Release any held sector assignment
+            if (d.target && d.target.sector) {
+                const qs = globalQueue.find(q => q.k === d.target.sector);
+                if (qs) qs.assigned = false;
+                if (useLLM && mcpClient && mcpClient.connected) {
+                    mcpClient.callTool('assign_target', { drone_id: `drone_${idx + 1}`, sector_id: '__RECALL__' }).catch(e => console.warn(e));
+                }
+            }
+            // Clear any diversion state
+            d._originalTarget = null;
+            d._fireScanQueue = null;
+            d.target = { x: BASE.x, z: BASE.z, sector: null, hazard: 'clear' };
+            d.state = 'moving';
+            addMCP(idx, 'call', 'recall_for_charging', { drone_id: `drone_${idx + 1}` }, { status: 'manual_rtb', base: [BASE.x, BASE.z] });
+            addThought(idx, 'action', `🔋 Manual recall — returning to charging station.`);
+        };
+
         // Status
         let missionGoal = "scanAll";
         let totalSurvivorsInitially = 0;
         let totalFound = 0;
         let serverMetrics = { elapsed: 0, found: 0, total: 0, scanned: 0, scannable: 0 };
+        let prevFoundCount = 0;
+        let alertTimeout = null;
 
         function updateStatus() {
             let h = '';
@@ -1831,10 +1860,39 @@
                 const st = d.dead ? '💀' : d.recharging ? '🔋' : d.state === 'scanning' ? '📡' : d.state === 'moving' ? '→' : '✅';
                 const bp = d.bypassFrames > 0 ? ' ⚡' : '';
                 const killBtn = d.dead ? '' : `<button onmousedown="killDrone(${i})" style="margin-left:5px; padding:1px 4px; font-size:9px; font-weight:bold; background:#300; border:1px solid #f00; color:#f55; cursor:pointer; border-radius:3px;" title="Emergency Shutdown">KILL</button>`;
-                h += `<div class="sr"><span class="sl" style="color:${DRONE_COLORS[i]}; display:flex; align-items:center;">${st} D${i + 1}${bp}${killBtn}</span><span class="sv ${batClass}">${d.battery.toFixed(0)}%</span></div>`;
+                const chargeBtn  = (d.dead || d.recharging) ? '' : `<button onmousedown="recallDrone(${i}); showAlertDialog('🔋 DRONE ${i + 1} RETURNED TO CHARGING');" style="margin-left:3px; padding:1px 4px; font-size:9px; font-weight:bold; background:#002244; border:1px solid #00ff88; color:#00ff88; cursor:pointer; border-radius:3px;" title="Send to Charging Station">CHARGE</button>`;
+                h += `<div class="sr"><span class="sl" style="color:${DRONE_COLORS[i]}; display:flex; align-items:center;">${st} D${i + 1}${bp}${killBtn}${chargeBtn}</span><span class="sv ${batClass}">${d.battery.toFixed(0)}%</span></div>`;
             });
             document.getElementById('sc').innerHTML = h;
-            document.getElementById('alert-box').classList.toggle('show', serverMetrics.found > 0);
+            if (serverMetrics.found > prevFoundCount) {
+                prevFoundCount = serverMetrics.found;
+                showAlertDialog('🟢 SURVIVOR FOUND!');
+            }
+
+            // Drone death or charging return popup
+            drones.forEach((d, i) => {
+                if (d._lastAlert !== 'dead' && d.dead) {
+                    d._lastAlert = 'dead';
+                    showAlertDialog(`💀 DRONE ${i + 1} DOWN!`);
+                } else if (d._lastAlert !== 'charging' && d.recharging) {
+                    d._lastAlert = 'charging';
+                    showAlertDialog(`🔋 DRONE ${i + 1} RETURNED TO CHARGING`);
+                } else if (!d.dead && !d.recharging) {
+                    d._lastAlert = null;
+                }
+            });
+                // Alert dialog helper
+                function showAlertDialog(msg) {
+                    const ab = document.getElementById('alert-box');
+                    ab.textContent = msg;
+                    ab.classList.remove('show');
+                    ab.style.borderColor = msg.includes('DRONE') && msg.includes('DOWN') ? '#ff2222' : '#00ff88';
+                    ab.style.color = msg.includes('DRONE') && msg.includes('DOWN') ? '#ff2222' : '#00ff88';
+                    void ab.offsetWidth;
+                    ab.classList.add('show');
+                    clearTimeout(alertTimeout);
+                    alertTimeout = setTimeout(() => ab.classList.remove('show'), 3000);
+                }
         }
 
         // Survivor detection removed. Handled by backend thermal_scan.
@@ -1919,14 +1977,17 @@
                 // Sector Visualization 
                 Object.values(sectorMeshes).forEach(s => {
                     if (s.scanned) {
+                        const isFire = s.hazard === "fire";
                         if (showScannedSectors) {
-                            s.mesh.material.color.setHex(0x3388ff);
-                            s.mesh.material.opacity = 0.35 + Math.sin(elapsed * 2 + s.mesh.position.x) * 0.1;
-                            s.mesh.material.emissive.setHex(0x113355);
+                            // Toggle-on: bright pulsing colours
+                            s.mesh.material.color.setHex(isFire ? 0xdd6600 : 0x00dd55);
+                            s.mesh.material.opacity = 0.45 + Math.sin(elapsed * 2 + s.mesh.position.x) * 0.1;
+                            s.mesh.material.emissive.setHex(isFire ? 0x441100 : 0x004422);
                         } else {
-                            s.mesh.material.color.setHex(0x152215);
-                            s.mesh.material.opacity = 0.4;
-                            s.mesh.material.emissive.setHex(0x000000);
+                            // Default: solid vivid green / orange-red so route is clearly visible
+                            s.mesh.material.color.setHex(isFire ? 0x883300 : 0x00aa44);
+                            s.mesh.material.opacity = 0.55;
+                            s.mesh.material.emissive.setHex(isFire ? 0x221100 : 0x003311);
                         }
                     }
                 });
@@ -2075,10 +2136,91 @@
                             d.group.lookAt(lookTarget);
 
                             // Battery drain — proportional to distance moved (frame-rate independent)
-                            const currentSector = `S${Math.floor(p.z / CELL)}_${Math.floor(p.x / CELL)}`;
-                            const currentHazard = hazardOf(Math.floor(p.z / CELL), Math.floor(p.x / CELL));
+                            const curR = Math.floor(p.z / CELL), curC = Math.floor(p.x / CELL);
+                            const currentSector = `S${curR}_${curC}`;
+                            const currentHazard = hazardOf(curR, curC);
                             const mult = currentHazard === "fire" ? 3 : currentHazard === "smoke" ? 1.5 : 1;
                             d.battery -= baseSpd * DRAIN_PER_UNIT * mult;
+
+                            // ─── EN-ROUTE SECTOR LOGIC ────────────────────────────────────────────────────
+
+                            // 1. FLY-OVER PASSIVE SCAN
+                            //    Every time the drone crosses into a new sector while moving, instantly mark it
+                            //    scanned and notify the backend — no stop required.
+                            if (currentSector !== d._lastSector) {
+                                d._lastSector = currentSector;
+                                const sm = sectorMeshes[currentSector];
+                                if (sm && !sm.scanned && d.target.sector !== currentSector) {
+                                    sm.scanned = true;
+                                    sm.mesh.material.color.setHex(currentHazard === "fire" ? 0x2a0a00 : 0x152215);
+                                    sm.mesh.material.opacity = 0.4;
+                                    d.sectorsScanned++;
+                                    addMCP(i, 'call', 'thermal_scan', { drone_id: `drone_${i + 1}`, sector: currentSector }, { status: 'fly_over_scan', hazard: currentHazard });
+                                    addMCP(i, 'call', 'scan_sector', { drone_id: `drone_${i + 1}`, sector_id: currentSector }, { scanned: true, method: 'fly_over' });
+                                    addThought(i, 'info', currentHazard === "fire"
+                                        ? `🔥📡 Fire-zone fly-over scan: ${currentSector} — checking for survivors in blaze.`
+                                        : `📡 Fly-over scan: ${currentSector} cleared en route to ${d.target.sector}.`);
+                                    if (useLLM && mcpClient && mcpClient.connected) {
+                                        mcpClient.callTool('thermal_scan', { drone_id: `drone_${i + 1}`, sector: currentSector }).catch(e => console.warn(e));
+                                        mcpClient.callTool('scan_sector', { drone_id: `drone_${i + 1}`, sector_id: currentSector }).catch(e => console.warn(e));
+                                    }
+                                }
+                            }
+
+                            // 2. FIRE-HAZARD HALT
+                            //    If the drone enters a fire sector that is NOT its assigned target, halt the
+                            //    original route and queue all non-fire adjacent sectors for a full thermal scan.
+                            //    Resumes to the original target once the queue is drained.
+                            if (currentHazard === "fire" && d.target.sector !== currentSector && !d._originalTarget && !d._fireScanQueue) {
+                                // Immediately scan the fire sector itself for trapped survivors
+                                addMCP(i, 'call', 'thermal_scan', { drone_id: `drone_${i + 1}`, sector: currentSector }, { status: 'fire_zone_survivor_check' });
+                                if (useLLM && mcpClient && mcpClient.connected) {
+                                    mcpClient.callTool('thermal_scan', { drone_id: `drone_${i + 1}`, sector: currentSector }).catch(e => console.warn(e));
+                                }
+                                const fireScanList = [];
+                                for (let dr = -1; dr <= 1; dr++) {
+                                    for (let dc = -1; dc <= 1; dc++) {
+                                        if (dr === 0 && dc === 0) continue;
+                                        const nr = curR + dr, nc = curC + dc;
+                                        if (nr < 0 || nr >= SECTORS || nc < 0 || nc >= SECTORS) continue;
+                                        const sid = `S${nr}_${nc}`;
+                                        const adjHazard = hazardOf(nr, nc);
+                                        if (sectorMeshes[sid] && !sectorMeshes[sid].scanned
+                                            && adjHazard !== "no_fly" && adjHazard !== "fire") {
+                                            fireScanList.push({ r: nr, c: nc, k: sid, x: nc * CELL + CELL / 2, z: nr * CELL + CELL / 2 });
+                                        }
+                                    }
+                                }
+                                if (fireScanList.length > 0) {
+                                    addThought(i, 'alert', `🔥 Fire in ${currentSector}! Halting route to ${d.target.sector}. Scanning ${fireScanList.length} adjacent sectors first.`);
+                                    d._originalTarget = d.target;
+                                    d._fireScanQueue = fireScanList;
+                                    const next = d._fireScanQueue.shift();
+                                    d.target = { x: next.x, z: next.z, sector: next.k, hazard: hazardOf(next.r, next.c) };
+                                    // Remain in 'moving' state — drone heads to first adjacent sector
+                                }
+                            }
+
+                            // 3. OPPORTUNISTIC RESCUE (original behaviour)
+                            //    Passing through an unscanned sector that has known unfound survivors → stop & scan.
+                            //    Skipped if already diverted by fire logic.
+                            if (!d._originalTarget && d.target.sector !== currentSector
+                                && sectorMeshes[currentSector] && !sectorMeshes[currentSector].scanned) {
+                                const hasUnfoundSurvivors = SURVIVORS.some(s => {
+                                    if (s.found) return false;
+                                    const sr = Math.floor(s.z / CELL), sc = Math.floor(s.x / CELL);
+                                    return sr === curR && sc === curC;
+                                });
+                                if (hasUnfoundSurvivors) {
+                                    addThought(i, 'alert', `SIGNAL DETECTED! Intercepting survivors in ${currentSector} while en route to ${d.target.sector}...`);
+                                    d._originalTarget = d.target;
+                                    d.target = { x: curC * CELL + CELL / 2, z: curR * CELL + CELL / 2, sector: currentSector };
+                                    d.state = "scanning";
+                                    d.scanTimer = 0;
+                                    addMCP(i, 'call', 'thermal_scan', { drone_id: `drone_${i + 1}`, sector: currentSector }, { status: 'intercepting_rescue' });
+                                    return; // Stop moving this frame
+                                }
+                            }
 
                             // Smart RTB: estimate battery needed to return.
                             // Since hazards increase drain by 1.5x - 3x, we must be very conservative.
@@ -2133,8 +2275,28 @@
                                 addMCP(i, 'call', 'scan_sector', { drone_id: `drone_${i + 1}`, sector_id: d.target.sector }, { scanned: true, survivors_in_range: survivorMeshes.filter(s => s.found).length });
                                 addThought(i, 'info', `Scan done: ${d.target.sector}. Bat: ${d.battery.toFixed(0)}%. Total: ${d.sectorsScanned} sectors.`);
                                 d.battery -= 0.2; // Drain exactly once for the scan
-                                d.state = "idle"; // RESET TO IDLE SO AGENT CAN REASSIGN
-                                d.target.sector = null;
+
+                                if (d._fireScanQueue && d._fireScanQueue.length > 0) {
+                                    // Still more fire-adjacent sectors to scan — dispatch to next one
+                                    const next = d._fireScanQueue.shift();
+                                    d.target = { x: next.x, z: next.z, sector: next.k, hazard: hazardOf(next.r, next.c) };
+                                    d.state = "moving";
+                                    addThought(i, 'action', `🔥 Fire-area scan: moving to adjacent sector ${next.k}.`);
+                                } else if (d._originalTarget) {
+                                    // Queue drained (fire diversion) or opportunistic rescue done — restore original route
+                                    const prevTarget = d.target.sector;
+                                    const wasFireScan = d._fireScanQueue !== null;
+                                    d.target = d._originalTarget;
+                                    d._originalTarget = null;
+                                    d._fireScanQueue = null;
+                                    d.state = "moving";
+                                    addThought(i, 'action', wasFireScan
+                                        ? `🔥 Fire-area scan complete (${prevTarget}). Resuming route to ${d.target.sector}.`
+                                        : `Rescue complete in ${prevTarget}. Resuming flight to ${d.target.sector}.`);
+                                } else {
+                                    d.state = "idle"; // RESET TO IDLE SO AGENT CAN REASSIGN
+                                    d.target.sector = null;
+                                }
                             }
                             scanSpheres[i].material.color.setHex(0x0066ff);
                             scanSpheres[i].material.opacity = 0.04;
@@ -2572,6 +2734,8 @@
                     defaultHeight: DRONE_FLY_HEIGHT,
                     targetHeight: DRONE_FLY_HEIGHT,
                     dead: false,
+                    _lastSector: null,     // tracks last sector to detect transitions for fly-over scan
+                    _fireScanQueue: null,  // queue of adjacent sectors to scan when fire is detected en route
                 });
             }
 

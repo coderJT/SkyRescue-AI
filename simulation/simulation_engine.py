@@ -432,7 +432,7 @@ class SimulationEngine:
         self.log(f"{drone_id} moved to ({x}, {y}, {z}){hazard_label}, battery: {drone.battery_remaining:.1f}%")
         return drone.to_dict()
 
-    def thermal_scan(self, drone_id):
+    def thermal_scan(self, drone_id, sector_id=None):
         if drone_id not in self.drones:
             return {"error": f"Drone {drone_id} not found"}
         drone = self.drones[drone_id]
@@ -448,11 +448,16 @@ class SimulationEngine:
             elapsed = self.pause_start_time - self.start_time - self.total_paused_duration
         else:
             elapsed = now - self.start_time - self.total_paused_duration
-            
-        drone_x, _, drone_z = drone.coordinates
-        current_sid = self._get_sector_at(drone_x, drone_z)
+
+        # Use the explicitly provided sector_id if given (fly-over scans); otherwise
+        # derive from the drone's current backend coordinates.
+        if sector_id and sector_id in self.sectors:
+            current_sid = sector_id
+        else:
+            drone_x, _, drone_z = drone.coordinates
+            current_sid = self._get_sector_at(drone_x, drone_z)
         
-        # Sector-based detection: find all active survivors in the current sector
+        # Sector-based detection: find all active survivors in the target sector
         detected = []
         for s_data in self.survivors:
             if s_data["expired"] or elapsed >= s_data["limit"]:

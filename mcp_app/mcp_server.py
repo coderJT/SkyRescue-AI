@@ -150,14 +150,17 @@ def scan_sector(drone_id: str, sector_id: str) -> dict:
 
 
 @mcp.tool()
-def thermal_scan(drone_id: str) -> dict:
+def thermal_scan(drone_id: str, sector: str = None) -> dict:
     """
-    Perform a thermal scan at the drone's current position.
+    Perform a thermal scan at the drone's current position (or a specified sector).
     Detects heat signatures (survivors) within the scan radius.
+    Pass 'sector' (e.g. 'S5_3') to scan a specific sector directly — used for
+    fly-over scans where the backend position may not yet reflect the drone's
+    real-world location.
     Returns list of detected survivor positions.
     """
     try:
-        result = engine.thermal_scan(drone_id)
+        result = engine.thermal_scan(drone_id, sector_id=sector)
         return result
     except Exception as e:
         return {"error": str(e)}
