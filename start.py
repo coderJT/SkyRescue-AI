@@ -33,8 +33,8 @@ def open_browser():
     webbrowser.open(f"file://{html_path}")
 
 if __name__ == "__main__":
-    if "MISTRAL_API_KEY" not in os.environ:
-        print("\n⚠️  WARNING: MISTRAL_API_KEY environment variable is not set.")
+    if "GROQ_API_KEY" not in os.environ:
+        print("\n⚠️  WARNING: GROQ_API_KEY environment variable is not set.")
         print("   Autonomous LLM coordination will be disabled until a key is provided.\n")
     
     # Start server in a background thread
