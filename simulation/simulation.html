@@ -865,6 +865,9 @@
                     <button id="daynight-btn" onclick="location.reload()"
                         style="background:rgba(255,50,50,0.15);border-color:rgba(255,50,50,0.3);color:#ff6655">↻
                         Restart [R]</button>
+                    <button id="add-drone-btn" onclick="addNewDrone()"
+                        style="background:rgba(0,200,100,0.05);border-color:rgba(0,200,100,0.15);color:#00cc66; padding:3px 10px; border-radius:4px; font-size:10px; cursor:not-allowed; pointer-events:none; border-width:1px; border-style:solid; transition:all 0.2s; opacity:0.5;">+
+                        Add Drone</button>
                 </div>
             </div>
         </div>
@@ -1008,7 +1011,7 @@
         const AVOIDANCE_LOOKAHEAD = 6;
         const AVOIDANCE_STRENGTH = 0.7;
         const DRONE_COLORS = ['#3388ff', '#ff5533', '#33cc55', '#ff9900', '#cc44ff'];
-        const DRONE_NAMES = ['drone_1', 'drone_2', 'drone_3', 'drone_4', 'drone_5'];
+        let DRONE_NAMES = ['drone_1', 'drone_2', 'drone_3', 'drone_4', 'drone_5'];
         const SURVIVORS = [];
         const BASE = { x: 5, z: 5 };
         const drones = []; // Moved initialization to startMission
@@ -1205,6 +1208,12 @@
 
         function addMCP(droneIdx, callType, toolName, args, response) {
             if (missionComplete) return; // Suppress all logs after mission ends
+
+            // Ensure thoughtLogs has enough arrays for the drone index
+            while (thoughtLogs.length <= droneIdx) {
+                thoughtLogs.push([]);
+            }
+
             const callMsg = `⚡ ACTION: Calling ${toolName}()...<br><span style="color:#667788;font-size:8px;">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;INFO&nbsp;&nbsp;&nbsp;&nbsp; Processing request of type CallToolRequest       server.py:720</span>`;
             const respMsg = `   ℹ ${JSON.stringify(response)}`;
             thoughtLogs[droneIdx].push({ type: 'mcp-call', msg: callMsg, time: Date.now(), isMCP: true, global: false });
@@ -1805,9 +1814,11 @@
         const survivorMeshes = [];
 
         // ─── OBSTACLE AVOIDANCE (repulsive force field + stuck escape) ───
-        function computeAvoidanceSteer(pos, desiredDir) {
+        function computeAvoidanceSteer(pos, desiredDir, droneIdx = -1) {
             let steerX = 0, steerZ = 0;
             let nearestDist = Infinity;
+            
+            // Avoid obstacles
             for (const obs of obstacles) {
                 // Height check: if drone is well ABOVE the obstacle, ignore it
                 if (pos.y > obs.height + 1.5) continue;
@@ -1822,6 +1833,38 @@
                     steerZ -= (dz / dist) * urgency * 1.8;
                 }
             }
+            
+            // Avoid other drones (separation behavior)
+            const DRONE_SEPARATION_DIST = 8.0;  // Minimum desired distance between drones
+            const DRONE_AVOIDANCE_RANGE = 15.0; // Range to start avoiding other drones
+            
+            drones.forEach((otherDrone, otherIdx) => {
+                if (otherIdx === droneIdx || otherDrone.dead) return;
+                
+                const otherPos = otherDrone.group.position;
+                const dx = otherPos.x - pos.x;
+                const dz = otherPos.z - pos.z;
+                const dist = Math.sqrt(dx * dx + dz * dz);
+                
+                // Only avoid if close enough
+                if (dist < DRONE_AVOIDANCE_RANGE && dist > 0.01) {
+                    if (dist < nearestDist) nearestDist = dist;
+                    
+                    // Stronger repulsion when closer
+                    const urgency = Math.pow(Math.max(0, 1 - dist / DRONE_AVOIDANCE_RANGE), 2);
+                    
+                    // Repulsion vector (away from other drone)
+                    steerX -= (dx / dist) * urgency * 2.5;
+                    steerZ -= (dz / dist) * urgency * 2.5;
+                    
+                    // Additional repulsion if very close
+                    if (dist < DRONE_SEPARATION_DIST) {
+                        steerX -= (dx / dist) * 1.5;
+                        steerZ -= (dz / dist) * 1.5;
+                    }
+                }
+            });
+            
             return { x: steerX, z: steerZ, blocked: nearestDist < 3.5 };
         }
 
@@ -1978,6 +2021,154 @@
             addThought(idx, 'action', `🔋 Manual recall — returning to charging station.`);
         };
 
+        // Add a new drone to the fleet
+        window.addNewDrone = async function () {
+            if (!missionStarted) {
+                alert('Please start the mission first before adding drones.');
+                addThought(-1, 'system', 'Cannot add drone: Mission not started');
+                return;
+            }
+
+            const newIdx = drones.length;
+            const droneId = `drone_${newIdx + 1}`;
+
+            console.log(`[Add Drone] Adding drone ${droneId} at index ${newIdx}`);
+
+            // Call MCP server to add drone
+            if (useLLM && mcpClient && mcpClient.connected) {
+                try {
+                    const result = await mcpClient.callTool('add_drone', { drone_id: droneId });
+                    console.log('[Add Drone] MCP result:', result);
+                } catch (e) {
+                    console.warn('[Add Drone] Failed to add drone via MCP:', e);
+                }
+            } else {
+                console.log('[Add Drone] MCP not connected, adding locally only');
+            }
+
+            // Create visual drone representation matching the startMission style
+            const color = DRONE_COLORS[newIdx % DRONE_COLORS.length];
+
+            // Create drone group with the same structure as startMission
+            const g = new THREE.Group();
+
+            // Drone body (chassis)
+            const bodyGeo = new THREE.BoxGeometry(0.6, 0.2, 0.6);
+            const bodyMat = new THREE.MeshStandardMaterial({
+                color: color,
+                emissive: color,
+                emissiveIntensity: 0.2
+            });
+            const body = new THREE.Mesh(bodyGeo, bodyMat);
+            body.position.y = 0.1;
+            body.castShadow = true;
+            g.add(body);
+
+            // Central hub
+            const hubGeo = new THREE.CylinderGeometry(0.15, 0.15, 0.25, 16);
+            const hubMat = new THREE.MeshStandardMaterial({ color: 0x333333 });
+            const hub = new THREE.Mesh(hubGeo, hubMat);
+            hub.position.y = 0.2;
+            g.add(hub);
+
+            // Arms and rotors
+            const armLength = 0.5;
+            const armGeo = new THREE.BoxGeometry(armLength, 0.08, 0.1);
+            const armMat = new THREE.MeshStandardMaterial({ color: 0x444444 });
+            const rotorGeo = new THREE.CylinderGeometry(0.25, 0.25, 0.03, 16);
+            const rotorMat = new THREE.MeshStandardMaterial({ color: 0x222222 });
+
+            const rotors = [];
+            for (let j = 0; j < 4; j++) {
+                const angle = (j * Math.PI) / 2;
+                const arm = new THREE.Mesh(armGeo, armMat);
+                arm.position.set(
+                    Math.cos(angle) * armLength * 0.5,
+                    0.15,
+                    Math.sin(angle) * armLength * 0.5
+                );
+                arm.rotation.y = angle;
+                g.add(arm);
+
+                const rotor = new THREE.Mesh(rotorGeo, rotorMat);
+                rotor.position.set(
+                    Math.cos(angle) * armLength,
+                    0.25,
+                    Math.sin(angle) * armLength
+                );
+                g.add(rotor);
+                rotors.push(rotor);
+            }
+
+            // Position at base with offset
+            const offsetX = newIdx * 2;
+            const spawnX = BASE.x + offsetX;
+            const spawnZ = BASE.z;
+            g.position.set(spawnX, DRONE_FLY_HEIGHT, spawnZ);
+            scene.add(g);
+
+            console.log(`[Add Drone] Drone positioned at (${spawnX}, ${DRONE_FLY_HEIGHT}, ${spawnZ})`);
+
+            // Create scan mesh (wireframe sphere)
+            const scanMesh = new THREE.Mesh(
+                new THREE.SphereGeometry(SCAN_RADIUS, 16, 16),
+                new THREE.MeshBasicMaterial({ color: 0x0066ff, transparent: true, opacity: 0.04, wireframe: true })
+            );
+            scanMesh.position.copy(g.position);
+            scene.add(scanMesh);
+            scanSpheres.push(scanMesh);
+
+            // Add to drones array with same structure as startMission
+            const newDrone = {
+                group: g,
+                rotors: rotors,
+                battery: 100,
+                target: null,
+                state: "idle",
+                scanTimer: 0,
+                recharging: false,
+                path: [{ x: g.position.x, z: g.position.z }],
+                sectorsScanned: 0,
+                avoidCount: 0,
+                stuckCheck: { x: g.position.x, z: g.position.z, frame: 0 },
+                escapeMode: "none",
+                escapeTimer: 0,
+                defaultHeight: DRONE_FLY_HEIGHT,
+                targetHeight: DRONE_FLY_HEIGHT,
+                dead: false,
+                _lastSector: null,
+                _fireScanQueue: null,
+                _lastAlert: null
+            };
+            drones.push(newDrone);
+
+            // Add thought log for new drone - ensure thoughtLogs can grow
+            if (thoughtLogs.length <= newIdx) {
+                thoughtLogs.push([]);
+            }
+
+            // Update DRONE_NAMES array to include new drone
+            DRONE_NAMES.push(droneId);
+
+            // Create label for new drone if it doesn't exist
+            let label = document.getElementById(`drone-label-${newIdx}`);
+            if (!label) {
+                label = document.createElement('div');
+                label.id = `drone-label-${newIdx}`;
+                label.className = 'drone-label';
+                label.style.cssText = 'position:absolute;transform:translate(-50%,-100%);pointer-events:none;font-family:Arial,sans-serif;font-size:11px;font-weight:bold;text-shadow:0 0 4px #000;white-space:nowrap;z-index:1000;color:' + color + ';';
+                document.body.appendChild(label);
+            }
+
+            console.log(`[Add Drone] Fleet size now: ${drones.length}`);
+
+            // Log the addition
+            addThought(-1, 'action', `🚁 NEW DRONE ADDED: ${droneId} deployed at base with 100% battery`);
+            addMCP(newIdx, 'call', 'add_drone', { drone_id: droneId }, { status: 'deployed', battery: 100, fleet_size: drones.length });
+
+            showAlertDialog(`🚁 NEW DRONE DEPLOYED! Fleet size: ${drones.length}`);
+        };
+
         // Status
         let missionGoal = "scanAll";
         let totalSurvivorsInitially = 0;
@@ -2021,19 +2212,29 @@
                     d._lastAlert = null;
                 }
             });
-                // Alert dialog helper
-                function showAlertDialog(msg) {
-                    const ab = document.getElementById('alert-box');
-                    ab.textContent = msg;
-                    ab.classList.remove('show');
-                    ab.style.borderColor = msg.includes('DRONE') && msg.includes('DOWN') ? '#ff2222' : '#00ff88';
-                    ab.style.color = msg.includes('DRONE') && msg.includes('DOWN') ? '#ff2222' : '#00ff88';
-                    void ab.offsetWidth;
-                    ab.classList.add('show');
-                    clearTimeout(alertTimeout);
-                    alertTimeout = setTimeout(() => ab.classList.remove('show'), 3000);
-                }
         }
+
+        // Alert dialog helper - global function
+        window.showAlertDialog = function(msg) {
+            const ab = document.getElementById('alert-box');
+            ab.textContent = msg;
+            ab.classList.remove('show');
+            // Set colors based on message type
+            if (msg.includes('DRONE') && msg.includes('DOWN')) {
+                ab.style.borderColor = '#ff2222';
+                ab.style.color = '#ff2222';
+            } else if (msg.includes('DRONE') && msg.includes('DEPLOYED')) {
+                ab.style.borderColor = '#0088ff';
+                ab.style.color = '#0088ff';
+            } else {
+                ab.style.borderColor = '#00ff88';
+                ab.style.color = '#00ff88';
+            }
+            void ab.offsetWidth;
+            ab.classList.add('show');
+            clearTimeout(alertTimeout);
+            alertTimeout = setTimeout(() => ab.classList.remove('show'), 3000);
+        };
 
         // Survivor detection removed. Handled by backend thermal_scan.
 
@@ -2154,11 +2355,17 @@
                     // Wake up idle drones at base if there are unassigned sectors
                     if (d.state === "idle" && !d.recharging && !d.dead && missionStarted && !missionComplete) {
                         if (useLLM) {
-                            d.state = "waiting_orders";
-                            if (!assignmentQueue.includes(i)) {
-                                assignmentQueue.push(i);
-                                addThought(i, 'info', `Waiting for swarm coordinator...`);
-                            }
+                            // Add staggered wake-up delay based on drone index to prevent clustering
+                            const wakeUpDelay = i * 500; // 500ms delay per drone index
+                            setTimeout(() => {
+                                if (d.state === "idle" && !d.dead && missionStarted) {
+                                    d.state = "waiting_orders";
+                                    if (!assignmentQueue.includes(i)) {
+                                        assignmentQueue.push(i);
+                                        addThought(i, 'info', `Waiting for swarm coordinator...`);
+                                    }
+                                }
+                            }, wakeUpDelay);
                         } else {
                             const s = getNextSector(d, i);
                             if (s) {
@@ -2230,7 +2437,7 @@
                             }
 
                             // Apply obstacle avoidance
-                            const steer = computeAvoidanceSteer(p, { x: dirX, z: dirZ });
+                            const steer = computeAvoidanceSteer(p, { x: dirX, z: dirZ }, i);
                             dirX += steer.x;
                             dirZ += steer.z;
 
@@ -2346,6 +2553,17 @@
                             //    This prevents the swarm from stopping tile-by-tile across the map
                             if (!d._originalTarget && d.target.sector !== currentSector
                                 && sectorMeshes[currentSector] && !sectorMeshes[currentSector].scanned) {
+                                // Check if another drone is already targeting this sector
+                                const isSectorAlreadyTargeted = drones.some((otherDrone, otherIdx) => 
+                                    otherIdx !== i && 
+                                    otherDrone.target && 
+                                    otherDrone.target.sector === currentSector
+                                );
+                                if (isSectorAlreadyTargeted) {
+                                    // Another drone is already targeting this sector, continue to our target
+                                    addThought(i, 'info', `📡 Sector ${currentSector} already targeted by another drone. Continuing to ${d.target.sector}.`);
+                                    // Continue with existing target
+                                } else {
                                 // Check for unfound survivors in this sector
                                 const hasUnfoundSurvivors = SURVIVORS.some(s => {
                                     if (s.found) return false;
@@ -2380,6 +2598,7 @@
                                     }
                                 }
                                 // If no survivors found or too far from target, continue moving to assigned target
+                                }
                             }
 
                             // Smart RTB: estimate battery needed to return.
@@ -2572,7 +2791,7 @@
             renderThoughts();
 
             // Update drone overlay labels (always run so they track with camera orbit)
-            for (let i = 0; i < 5; i++) {
+            for (let i = 0; i < drones.length; i++) {
                 const label = document.getElementById(`drone-label-${i}`);
                 if (!label) continue;
 
@@ -2936,6 +3155,14 @@
             missionStarted = true;
             missionStartTime = performance.now();
             document.getElementById('start-controls').style.display = 'none';
+
+            // Enable Add Drone button
+            const addDroneBtn = document.getElementById('add-drone-btn');
+            if (addDroneBtn) {
+                addDroneBtn.style.opacity = '1';
+                addDroneBtn.style.pointerEvents = 'auto';
+                addDroneBtn.style.cursor = 'pointer';
+            }
 
             // ── Clear previous state ──
             drones.forEach(d => scene.remove(d.group));

@@ -34,6 +34,9 @@ class SimulationService:
     def list_drones(self):
         return self.engine.list_drones()
 
+    def add_drone(self, drone_id: str = None, x: float = None, z: float = None) -> dict:
+        return self.engine.add_drone(drone_id, x, z)
+
     def get_drone_status(self, drone_id: str) -> dict:
         return self.engine.get_drone_status(drone_id)
 

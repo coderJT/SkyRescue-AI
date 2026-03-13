@@ -38,10 +38,10 @@ class SimulationEngine:
         self.total_paused_duration = 0
 
         self.drones = {
-            "drone_1": Drone("drone_1", 100, "active", (5, 5, 5)),
-            "drone_2": Drone("drone_2", 100, "active", (5, 5, 5)),
-            "drone_3": Drone("drone_3", 100, "active", (5, 5, 5)),
-            "drone_4": Drone("drone_4", 100, "active", (5, 5, 5)),
+            "drone_1": Drone("drone_1", 100, "active", (3, 5, 3)),
+            "drone_2": Drone("drone_2", 100, "active", (7, 5, 3)),
+            "drone_3": Drone("drone_3", 100, "active", (3, 5, 7)),
+            "drone_4": Drone("drone_4", 100, "active", (7, 5, 7)),
             "drone_5": Drone("drone_5", 100, "active", (5, 5, 5)),
         }
 
@@ -308,6 +308,46 @@ class SimulationEngine:
     def list_drones(self):
         return list(self.drones.keys())
 
+    def add_drone(self, drone_id: str = None, x: float = None, z: float = None) -> dict:
+        """
+        Add a new drone to the rescue fleet.
+        If drone_id is not provided, generates one automatically.
+        If position is not provided, places drone at base camp.
+        """
+        from drone.drone import Drone
+
+        # Generate drone ID if not provided
+        if not drone_id:
+            existing_nums = [int(d.split('_')[1]) for d in self.drones.keys() if d.startswith('drone_') and d.split('_')[1].isdigit()]
+            next_num = max(existing_nums, default=0) + 1
+            drone_id = f"drone_{next_num}"
+
+        if drone_id in self.drones:
+            return {"error": f"Drone {drone_id} already exists"}
+
+        # Determine spawn position
+        if x is None:
+            x = settings.base_x
+        if z is None:
+            z = settings.base_z
+
+        # Slightly offset if multiple drones at base
+        offset = len([d for d in self.drones.values() if d.status == "active" and abs(d.coordinates[0] - x) < 5 and abs(d.coordinates[2] - z) < 5])
+        x = x + offset * 2
+
+        # Create new drone at base position (y=5 for flying height)
+        new_drone = Drone(drone_id, 100, "active", (x, 5, z))
+        self.drones[drone_id] = new_drone
+
+        self.log(f"🚁 NEW DRONE ADDED: {drone_id} at ({x:.1f}, 5, {z:.1f}) with 100% battery")
+        return {
+            "status": "success",
+            "drone_id": drone_id,
+            "battery": 100,
+            "position": [x, 5, z],
+            "fleet_size": len(self.drones)
+        }
+
     def get_fleet_status(self):
         return {did: d.to_dict() for did, d in self.drones.items()}
 
@@ -396,10 +436,17 @@ class SimulationEngine:
             total_needed = len(self.survivors)
 
             # Update survivor expired status
+            # Only mark survivors as expired if they haven't been found yet
             for s_data in self.survivors:
                 if not s_data["expired"] and elapsed >= s_data["limit"]:
-                    s_data["expired"] = True
-                    self.log(f"💀 SURVIVOR DIED at {s_data['pos']} - time limit exceeded!")
+                    # Check if this survivor has been discovered/found
+                    survivor_pos = s_data["pos"]
+                    is_found = survivor_pos in self.discovered_survivors
+                    
+                    # Only mark as expired if not yet found
+                    if not is_found:
+                        s_data["expired"] = True
+                        self.log(f"💀 SURVIVOR DIED at {s_data['pos']} - time limit exceeded!")
 
             # Update mission status
             if self.mission_status == "active":

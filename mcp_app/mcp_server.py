@@ -185,6 +185,17 @@ def recall_for_charging(drone_id: str) -> dict:
 
 
 @mcp.tool()
+def add_drone(drone_id: str = None, x: float = None, z: float = None) -> dict:
+    """
+    Add a new drone to the rescue fleet.
+    Automatically assigns a drone ID if not specified.
+    Places drone at base camp coordinates if position not specified.
+    New drones start with 100% battery and 'active' status.
+    """
+    return service.add_drone(drone_id, x, z)
+
+
+@mcp.tool()
 def report_telemetry(drone_id: str, battery: float, x: float, y: float, z: float, status: str, clear_target: bool = False) -> dict:
     """
     Called by the drone/frontend to report its current telemetry to the engine.

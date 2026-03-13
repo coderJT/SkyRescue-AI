@@ -161,17 +161,8 @@ async def run_orchestrator(session):
                 continue
 
             hazards = [sid for sid, s in sectors.items() if isinstance(s, dict) and s.get("discovered") and s.get("hazard") != "clear"]
-            if not tracker.should_invoke_llm(idle_drone_ids, hazards):
-                await asyncio.sleep(2)
-                continue
-
-            now = time.time()
-            if now - last_llm_time < 6:
-                await asyncio.sleep(1)
-                continue
-            last_llm_time = now
-            idle_count = 0
-
+            
+            # Calculate recommendations for all idle drones immediately
             elapsed = world.get("elapsed_seconds", 0)
             recommendations = {}
             for did in idle_drone_ids:
@@ -184,8 +175,127 @@ async def run_orchestrator(session):
                 await asyncio.sleep(2)
                 continue
 
+            # ALWAYS try fast-path first for immediate assignment
+            # Get currently assigned sectors
+            currently_assigned_sectors = {
+                d.get("target_sector")
+                for did, d in drones.items()
+                if isinstance(d, dict) and d.get("target_sector")
+            }
+            
+            # Track which drones were assigned via fast path
+            fast_path_assigned = []
+            
+            # Process drones in a coordinated way even in fast path to avoid duplicates
+            # Sort by recommendation score to prioritize drones with better options
+            drone_rec_pairs = []
+            for did in idle_drone_ids:
+                if did in recommendations and recommendations[did]:
+                    top_rec = recommendations[did][0]
+                    drone_rec_pairs.append((did, top_rec))
+            
+            # Sort by recommendation score (lower is better)
+            drone_rec_pairs.sort(key=lambda x: x[1].get("score", 9999))
+            
+            fast_path_assigned_sectors = set(currently_assigned_sectors)
+            
+            for did, top_rec in drone_rec_pairs:
+                sid = top_rec["id"]
+                
+                # Check if sector is already assigned (by other drones in this fast-path batch)
+                if sid in fast_path_assigned_sectors:
+                    # Try to find an alternative from this drone's recommendations
+                    alt_rec = None
+                    for rec in recommendations[did]:
+                        if rec["id"] not in fast_path_assigned_sectors:
+                            alt_rec = rec
+                            break
+                    
+                    if alt_rec:
+                        sid = alt_rec["id"]
+                        reason = alt_rec.get("reason", f"Fast-path alternate to {sid} (original {top_rec['id']} taken)")
+                    else:
+                        # No alternative available, skip this drone for now
+                        continue
+                else:
+                    reason = top_rec.get("reason", f"Fast-path assignment to {sid}")
+                
+                print(f"⚡ FAST-PATH: {did} → {sid} | {reason}")
+                resp = await call_tool(session, "assign_target", {"drone_id": did, "sector_id": sid, "reason": reason})
+                if resp and isinstance(resp, dict) and resp.get("error"):
+                    print(f"⚠️ FAST-PATH ERROR for {did}: {resp['error']}")
+                else:
+                    fast_path_assigned.append(did)
+                    fast_path_assigned_sectors.add(sid)
+                    await call_tool(session, "log_mission_event", {"message": f"FAST-PATH: {did} → {sid}: {reason}"})
+                    # Small delay between assignments to prevent congestion
+                    await asyncio.sleep(0.05)
+            
+            # Update idle drone list to exclude those assigned via fast path
+            idle_drone_ids = [did for did in idle_drone_ids if did not in fast_path_assigned]
+            
+            if fast_path_assigned:
+                tracker.mark_assigned(fast_path_assigned)
+                # Don't commit yet - we'll commit after LLM processing or if no LLM needed
+            
+            # If no drones left after fast-path, continue to next iteration
+            if not idle_drone_ids:
+                tracker.commit([], hazards)  # No idle drones left
+                await asyncio.sleep(0.1)
+                continue
+            
+            # Only use LLM if we have multiple drones left AND tracker says to invoke LLM
+            # OR if we have hazards that need coordination
+            if len(idle_drone_ids) > 1 and tracker.should_invoke_llm(idle_drone_ids, hazards):
+                # Continue to LLM path below
+                pass
+            else:
+                # Try to assign remaining drones with fast-path logic (non-LLM)
+                # This handles cases like 1 drone remaining or when LLM isn't needed
+                remaining_drone_rec_pairs = []
+                for did in idle_drone_ids:
+                    if did in recommendations and recommendations[did]:
+                        # Filter recommendations to only unassigned sectors
+                        available_recs = [r for r in recommendations[did] if r["id"] not in fast_path_assigned_sectors]
+                        if available_recs:
+                            remaining_drone_rec_pairs.append((did, available_recs[0]))
+                
+                # Sort by recommendation score
+                remaining_drone_rec_pairs.sort(key=lambda x: x[1].get("score", 9999))
+                
+                for did, rec in remaining_drone_rec_pairs:
+                    sid = rec["id"]
+                    reason = rec.get("reason", f"Non-LLM assignment to {sid}")
+                    
+                    print(f"⚡ NON-LLM: {did} → {sid} | {reason}")
+                    resp = await call_tool(session, "assign_target", {"drone_id": did, "sector_id": sid, "reason": reason})
+                    if resp and isinstance(resp, dict) and resp.get("error"):
+                        print(f"⚠️ NON-LLM ERROR for {did}: {resp['error']}")
+                    else:
+                        fast_path_assigned.append(did)
+                        fast_path_assigned_sectors.add(sid)
+                        await call_tool(session, "log_mission_event", {"message": f"NON-LLM: {did} → {sid}: {reason}"})
+                        await asyncio.sleep(0.05)
+                
+                if fast_path_assigned:
+                    tracker.mark_assigned(fast_path_assigned)
+                    tracker.commit(idle_drone_ids, hazards)  # idle_drone_ids is updated to exclude assigned drones
+                    await asyncio.sleep(0.1)
+                    continue
+                else:
+                    # No assignments made, continue to LLM
+                    pass
+            
+            # LLM PATH: Use LLM for complex coordination (multiple drones, hazards, etc.)
+            now = time.time()
+            if now - last_llm_time < 2:
+                await asyncio.sleep(0.5)
+                continue
+            last_llm_time = now
+            idle_count = 0
+
             print_swarm_status(drones, idle_drone_ids)
-            print(f"🧠 Coordinating {len(idle_drone_ids)} idle drones...")
+            print(f"🧠 Coordinating {len(idle_drone_ids)} idle drones with LLM...")
 
             prompt = build_prompt(drones, sectors, idle_drone_ids, recommendations, elapsed)
             try:
@@ -293,6 +403,8 @@ async def run_orchestrator(session):
                 assigned.append(did)
                 assigned_sectors.add(sid)
                 await call_tool(session, "log_mission_event", {"message": f"REASON: {did} → {sid}: {reason}"})
+                # Small delay to prevent simultaneous assignments
+                await asyncio.sleep(0.1)
 
             tracker.mark_assigned(assigned)
             tracker.commit(idle_drone_ids, hazards)
