@@ -74,27 +74,36 @@ def build_prompt(
         )
         rec_lines.append(f"  {did}: {entries}")
 
-    prompt = f"""
-    
-    
-Swarm coordination for {len(idle_ids)} available drones.
-Coverage: {sectors.get('coverage_pct',0)}% | Survivors: {sectors.get('found_survivors',0)}/{sectors.get('total_survivors',0)} | Wind: {sectors.get('wind','')}
-Elapsed seconds: {elapsed_seconds}
+    prompt = f"""You are an autonomous rescue swarm coordinator. Assign sectors to idle drones.
 
-FLEET:
+MISSION STATE (elapsed: {elapsed_seconds}s)
+Coverage: {sectors.get('coverage_pct',0)}% | Survivors: {sectors.get('found_survivors',0)}/{sectors.get('total_survivors',0)} | Wind: {sectors.get('wind','')}
+
+FLEET STATUS:
 {os.linesep.join(fleet_lines)}
 
-CANDIDATES (id, hazard, distance, cost: Y%, remaining: Z%):
+SECTOR CANDIDATES per drone (sector_id, hazard, distance, battery_cost, battery_remaining_after_return):
 {os.linesep.join(rec_lines)}
 
-RULES: 
-1. Assign 1 unique sector per drone. Minimize travel. Never duplicate sectors. 
-2. RECALL ONLY IF bat < 25%, OR if the drone's CANDIDATES list is completely empty. 
-3. BATTERY FEASIBILITY: All provided candidates are ALREADY VERIFIED to have enough battery for a safe round-trip. DO NOT second-guess battery feasibility. DO NOT recall a drone if it has valid candidates.
-4. REASONING MUST BE SPECIFIC: explicitly mention battery %, round-trip cost, distance, hazard type (or "frontier exploration" if unexplored), wind, and the provided arrival comparison (e.g. "fastest to reach" or "faster than drone_x by Y ETA").
+RULES:
+1. Assign exactly 1 unique sector per idle drone. Never assign the same sector to two drones.
+2. RECALL (sector="__RECALL__") ONLY if battery < 25% OR candidate list is empty.
+3. All listed candidates are pre-verified to have sufficient battery for a safe round-trip.
+4. Each drone's reason MUST follow the exact 3-part structure below.
 
-JSON ONLY:
-{{"strategy":"1 detailed sentence mentioning distances and battery feasibility","assignments":{{"drone_id":{{"sector":"SID","reason":"1 detailed sentence mentioning specific distance, round-trip battery cost, remaining battery after return, hazard status, and the explicitly provided fleet arrival comparison (fastest to reach, fallback, etc)"}}}}}}
+OUTPUT FORMAT — respond with valid JSON only, no markdown, no extra text:
+{{
+  "strategy": "One sentence summarising the overall swarm plan, mentioning coverage %, survivor count, and key hazard zones.",
+  "assignments": {{
+    "<drone_id>": {{
+      "sector": "<sector_id>",
+      "reason": "[OBSERVATION]: <what the drone currently sees — its battery %, position, and the hazard/distance of the chosen sector>. [RISK ASSESSMENT]: <why this sector is the best choice vs alternatives — compare distances, battery costs, hazard types, and whether another drone is closer>. [DECISION]: <the final dispatch order with exact numbers — sector id, distance in units, battery cost %, battery remaining after return %>"
+    }}
+  }}
+}}
+
+Example reason (use this exact tag format):
+"[OBSERVATION]: drone_2 is IDLE at Pos(40,60) with 87% battery; nearest candidate S3_4 is clear terrain 55u away costing 12% battery. [RISK ASSESSMENT]: S3_4 is the fastest-to-reach unscanned frontier; drone_1 is already heading to S2_4 so no overlap; battery after return would be 75% — well above recall threshold. [DECISION]: Dispatch drone_2 to S3_4 (55u, cost 12%, remaining 75% after RTB)."
 """
     return prompt.strip()
 
@@ -213,12 +222,26 @@ async def run_orchestrator(session):
                     
                     if alt_rec:
                         sid = alt_rec["id"]
-                        reason = alt_rec.get("reason", f"Fast-path alternate to {sid} (original {top_rec['id']} taken)")
+                        rec_used = alt_rec
+                        reason = (
+                            f"[OBSERVATION]: {did} is IDLE with {round(drones.get(did,{}).get('battery',0),1)}% battery; "
+                            f"original top sector {top_rec['id']} already claimed. "
+                            f"[RISK ASSESSMENT]: Alternate sector {sid} ({alt_rec.get('hazard','?')}) is {alt_rec.get('distance','?')}u away, "
+                            f"costing {alt_rec.get('battery_cost','?')}% battery with {round(alt_rec.get('battery_after',0),1)}% remaining after RTB. "
+                            f"[DECISION]: Dispatch {did} to {sid} (fast-path alternate)."
+                        )
                     else:
                         # No alternative available, skip this drone for now
                         continue
                 else:
-                    reason = top_rec.get("reason", f"Fast-path assignment to {sid}")
+                    rec_used = top_rec
+                    reason = (
+                        f"[OBSERVATION]: {did} is IDLE with {round(drones.get(did,{}).get('battery',0),1)}% battery; "
+                        f"sector {sid} ({top_rec.get('hazard','?')}) is {top_rec.get('distance','?')}u away. "
+                        f"[RISK ASSESSMENT]: Highest-scored candidate — battery cost {top_rec.get('battery_cost','?')}%, "
+                        f"{round(top_rec.get('battery_after',0),1)}% remaining after RTB; no conflict with other drones. "
+                        f"[DECISION]: Dispatch {did} to {sid} (fast-path, cost {top_rec.get('battery_cost','?')}%, remaining {round(top_rec.get('battery_after',0),1)}%)."
+                    )
                 
                 print(f"⚡ FAST-PATH: {did} → {sid} | {reason}")
                 resp = await call_tool(session, "assign_target", {"drone_id": did, "sector_id": sid, "reason": reason})
@@ -227,7 +250,7 @@ async def run_orchestrator(session):
                 else:
                     fast_path_assigned.append(did)
                     fast_path_assigned_sectors.add(sid)
-                    await call_tool(session, "log_mission_event", {"message": f"FAST-PATH: {did} → {sid}: {reason}"})
+                    await call_tool(session, "log_mission_event", {"message": f"🧠 REASONING: {did} → {sid}: {reason}"})
                     # Small delay between assignments to prevent congestion
                     await asyncio.sleep(0.05)
             
@@ -265,7 +288,13 @@ async def run_orchestrator(session):
                 
                 for did, rec in remaining_drone_rec_pairs:
                     sid = rec["id"]
-                    reason = rec.get("reason", f"Non-LLM assignment to {sid}")
+                    reason = (
+                        f"[OBSERVATION]: {did} is IDLE with {round(drones.get(did,{}).get('battery',0),1)}% battery; "
+                        f"sector {sid} ({rec.get('hazard','?')}) is {rec.get('distance','?')}u away. "
+                        f"[RISK ASSESSMENT]: Best available candidate — battery cost {rec.get('battery_cost','?')}%, "
+                        f"{round(rec.get('battery_after',0),1)}% remaining after RTB; LLM not invoked (single drone or no hazard change). "
+                        f"[DECISION]: Dispatch {did} to {sid} (non-LLM, cost {rec.get('battery_cost','?')}%, remaining {round(rec.get('battery_after',0),1)}%)."
+                    )
                     
                     print(f"⚡ NON-LLM: {did} → {sid} | {reason}")
                     resp = await call_tool(session, "assign_target", {"drone_id": did, "sector_id": sid, "reason": reason})
@@ -274,7 +303,7 @@ async def run_orchestrator(session):
                     else:
                         fast_path_assigned.append(did)
                         fast_path_assigned_sectors.add(sid)
-                        await call_tool(session, "log_mission_event", {"message": f"NON-LLM: {did} → {sid}: {reason}"})
+                        await call_tool(session, "log_mission_event", {"message": f"🧠 REASONING: {did} → {sid}: {reason}"})
                         await asyncio.sleep(0.05)
                 
                 if fast_path_assigned:
@@ -315,6 +344,17 @@ async def run_orchestrator(session):
 
             print(f"📝 Strategy: {strategy}")
             await call_tool(session, "log_mission_event", {"message": f"🧠 STRATEGY: {strategy}"})
+
+            # Log each drone's structured reasoning so the frontend can display it
+            for did, entry in assignments.items():
+                if not isinstance(entry, dict):
+                    continue
+                reason = entry.get("reason", "")
+                sid = entry.get("sector", "")
+                if reason and sid:
+                    await call_tool(session, "log_mission_event", {
+                        "message": f"🧠 REASONING: {did} → {sid}: {reason}"
+                    })
 
             assigned = []
             assigned_sectors = {

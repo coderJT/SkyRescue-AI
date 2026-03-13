@@ -364,29 +364,38 @@
         /* Deep Reasoning Tags */
         .reason-tag {
             font-weight: 700;
-            padding: 1px 4px;
+            padding: 1px 5px;
             border-radius: 3px;
-            font-size: 9px;
-            margin-right: 2px;
+            font-size: 8.5px;
+            margin-right: 3px;
             text-transform: uppercase;
+            letter-spacing: 0.5px;
         }
 
         .obs-tag {
-            background: rgba(78, 204, 163, 0.2);
+            background: rgba(78, 204, 163, 0.18);
             color: #4ecca3;
-            border: 1px solid rgba(78, 204, 163, 0.3);
+            border: 1px solid rgba(78, 204, 163, 0.35);
         }
 
         .risk-tag {
-            background: rgba(255, 170, 0, 0.2);
+            background: rgba(255, 170, 0, 0.18);
             color: #ffaa00;
-            border: 1px solid rgba(255, 170, 0, 0.3);
+            border: 1px solid rgba(255, 170, 0, 0.35);
         }
 
         .dec-tag {
-            background: rgba(0, 210, 255, 0.2);
-            color: #00d2ff;
-            border: 1px solid rgba(0, 210, 255, 0.3);
+            background: rgba(100, 180, 255, 0.18);
+            color: #64b4ff;
+            border: 1px solid rgba(100, 180, 255, 0.35);
+        }
+
+        /* System-level thought (e.g. mission not started) */
+        .thought-entry.system {
+            background: rgba(120, 120, 120, 0.08);
+            color: #888;
+            border-left: 2px solid #555;
+            font-style: italic;
         }
 
         #mcp-toggle {
@@ -1165,23 +1174,24 @@
 
         function addThought(droneIdx, type, msg) {
             if (missionComplete) return; // Suppress all logs after mission ends
-            let reasonPrefix = useLLM ? '🧠 REASONING (LLM): ' : '🧠 REASONING (LOCAL): ';
+            let reasonPrefix = useLLM ? '🧠 LLM REASONING: ' : '🧠 LOCAL REASONING: ';
             const actionPrefix = '⚡ ACTION: ';
             const prefixes = {
-                'action': actionPrefix,
-                'reason': reasonPrefix,
-                'danger': '🚫 DANGER: ',
-                'alert': '🔥 ALERT: ',
+                'action':  actionPrefix,
+                'reason':  reasonPrefix,
+                'danger':  '🚫 DANGER: ',
+                'alert':   '🔥 ALERT: ',
                 'warning': '⚠️ WARNING: ',
-                'info': '   i ',
-                'phase': ''
+                'info':    '   ℹ ',
+                'phase':   '',
+                'system':  '⚙ SYSTEM: ',
             };
 
             // Parse and highlight deep reasoning tags
             if (type === 'reason') {
-                msg = msg.replace(/\[OBSERVATION\]:/g, '<span class="reason-tag obs-tag">[OBSERVATION]</span>');
+                msg = msg.replace(/\[OBSERVATION\]:/g,     '<span class="reason-tag obs-tag">[OBSERVATION]</span>');
                 msg = msg.replace(/\[RISK ASSESSMENT\]:/g, '<span class="reason-tag risk-tag">[RISK ASSESSMENT]</span>');
-                msg = msg.replace(/\[DECISION\]:/g, '<span class="reason-tag dec-tag">[DECISION]</span>');
+                msg = msg.replace(/\[DECISION\]:/g,        '<span class="reason-tag dec-tag">[DECISION]</span>');
             }
 
             const formattedMsg = (prefixes[type] || '') + msg;
@@ -1214,8 +1224,62 @@
                 thoughtLogs.push([]);
             }
 
-            const callMsg = `⚡ ACTION: Calling ${toolName}()...<br><span style="color:#667788;font-size:8px;">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;INFO&nbsp;&nbsp;&nbsp;&nbsp; Processing request of type CallToolRequest       server.py:720</span>`;
-            const respMsg = `   ℹ ${JSON.stringify(response)}`;
+            // ── Human-readable tool call descriptions ──────────────────────────
+            const toolDescriptions = {
+                'thermal_scan':       (a) => `🔬 Thermal scan on sector ${a.sector || a.sector_id || '?'}`,
+                'scan_sector':        (a) => `📡 Full sector scan: ${a.sector_id || '?'} (method: ${a.method || 'dedicated'})`,
+                'assign_target':      (a) => `🎯 Assign ${a.drone_id || '?'} → sector ${a.sector_id || '?'}`,
+                'recall_for_charging':(a) => `🔋 Recall ${a.drone_id || '?'} to charging base`,
+                'report_drone_loss':  (a) => `💀 Report loss of ${a.drone_id || '?'} at [${(a.location||[]).join(',')}]`,
+                'add_drone':          (a) => `🚁 Deploy new drone: ${a.drone_id || '?'}`,
+                'finalize_mission':   (a) => `🏁 Finalize mission (goal: ${a.goal || '?'}, time: ${a.completion_time || '?'})`,
+                'log_mission_event':  (a) => `📝 Log: ${a.message || '?'}`,
+                'get_world_state':    ()  => `🌍 Fetch world state`,
+                'start_mission':      (a) => `🚀 Start mission (${a.active_drones || '?'} drones, ${a.survivor_count || '?'} survivors)`,
+            };
+            const descFn = toolDescriptions[toolName];
+            const callDesc = descFn ? descFn(args) : `⚡ ${toolName}(${Object.keys(args||{}).join(', ')})`;
+
+            // ── Human-readable response summary ────────────────────────────────
+            function summariseResponse(name, resp) {
+                if (!resp || typeof resp !== 'object') return String(resp ?? '');
+                // Specific tool summaries
+                if (name === 'thermal_scan') {
+                    const cnt = resp.detected_count ?? resp.detected?.length ?? 0;
+                    const bat = resp.battery_after != null ? ` | bat: ${resp.battery_after}%` : '';
+                    return cnt > 0
+                        ? `✅ ${cnt} survivor(s) detected${bat}`
+                        : `✅ Sector clear — no survivors${bat}`;
+                }
+                if (name === 'scan_sector') {
+                    const haz = resp.hazard || resp.status || 'clear';
+                    const surv = resp.survivors_in_range != null ? ` | survivors in range: ${resp.survivors_in_range}` : '';
+                    return `✅ Scanned — hazard: ${haz}${surv}`;
+                }
+                if (name === 'assign_target') {
+                    return resp.error
+                        ? `❌ ${resp.error}`
+                        : `✅ Target set → ${resp.target || '?'}`;
+                }
+                if (name === 'recall_for_charging') {
+                    return `✅ Drone recalled — battery: ${resp.battery ?? '?'}%`;
+                }
+                if (name === 'add_drone') {
+                    return `✅ Fleet size now ${resp.fleet_size ?? '?'} | bat: ${resp.battery ?? 100}%`;
+                }
+                if (name === 'start_mission') {
+                    return `✅ Mission active — ${resp.survivor_count ?? '?'} survivors placed`;
+                }
+                // Generic: show status or first meaningful key
+                if (resp.status) return `✅ ${resp.status}`;
+                if (resp.error)  return `❌ ${resp.error}`;
+                const keys = Object.keys(resp).slice(0, 3);
+                return keys.map(k => `${k}: ${resp[k]}`).join(' | ');
+            }
+            const respDesc = summariseResponse(toolName, response);
+
+            const callMsg = `⚡ ACTION: ${callDesc}<br><span style="color:#667788;font-size:8px;">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;INFO&nbsp;&nbsp;&nbsp;&nbsp; Processing request of type CallToolRequest       server.py:720</span>`;
+            const respMsg = `   ℹ ${respDesc}`;
             thoughtLogs[droneIdx].push({ type: 'mcp-call', msg: callMsg, time: Date.now(), isMCP: true, global: false });
             thoughtLogs[droneIdx].push({ type: 'mcp-resp', msg: respMsg, time: Date.now() + 1, isMCP: true, global: false });
             if (thoughtLogs[droneIdx].length > MAX_THOUGHTS) {
@@ -2889,16 +2953,29 @@
                     // Sync Mission Log (Reasoning)
                     if (world.mission_log) {
                         world.mission_log.forEach(entry => {
-                            // Avoid duplicating logs already in the list
-                            // We check if it's already in the global thought list if it's a strategy
+                            // ── Strategy line ──────────────────────────────────────────
                             if (entry.includes("🧠 STRATEGY:")) {
                                 const strat = entry.split("🧠 STRATEGY:")[1].trim();
-                                // Deduplicate roughly by content for now
                                 const exists = thoughtLogs.some(log => log.some(t => t.msg.includes(strat)));
                                 if (!exists) addThought(-1, 'phase', `🧠 STRATEGY: ${strat}`);
                             }
-                            if (entry.includes("REASON:")) {
-                                // REASON logs are handled by drone assignment sync below
+
+                            // ── Per-drone structured reasoning ─────────────────────────
+                            // Format: "🧠 REASONING: drone_X → SY_Z: [OBSERVATION]:... [RISK ASSESSMENT]:... [DECISION]:..."
+                            if (entry.includes("🧠 REASONING:")) {
+                                const body = entry.split("🧠 REASONING:")[1].trim();
+                                // Parse "drone_X → SY_Z: <reason text>"
+                                const match = body.match(/^(drone_\d+)\s*→\s*(\S+):\s*(.+)$/s);
+                                if (match) {
+                                    const [, droneId, sector, reasonText] = match;
+                                    const droneIdx = parseInt(droneId.split('_')[1]) - 1;
+                                    // Deduplicate: skip if this exact reasoning is already logged
+                                    const exists = droneIdx >= 0 && thoughtLogs[droneIdx] &&
+                                        thoughtLogs[droneIdx].some(t => t.msg.includes(sector) && t.msg.includes('[OBSERVATION]'));
+                                    if (!exists && droneIdx >= 0 && droneIdx < drones.length) {
+                                        addThought(droneIdx, 'reason', reasonText);
+                                    }
+                                }
                             }
                         });
                     }
@@ -2958,8 +3035,14 @@
                                 if (sm) {
                                     d.target = { x: sm.c * CELL + CELL / 2, z: sm.r * CELL + CELL / 2, sector: sDrone.target_sector, hazard: sm.hazard };
                                     d.state = "moving";
-                                    const droneReason = sDrone.reason || `Proceed to ${sDrone.target_sector}`;
-                                    addThought(idx, 'reason', droneReason);
+                                    // Show the reason as structured reasoning if it has the [OBSERVATION] tags,
+                                    // otherwise wrap it in a plain action message
+                                    const rawReason = sDrone.reason || `Proceed to ${sDrone.target_sector}`;
+                                    if (rawReason.includes('[OBSERVATION]')) {
+                                        addThought(idx, 'reason', rawReason);
+                                    } else {
+                                        addThought(idx, 'action', `🎯 Assigned to ${sDrone.target_sector} — ${rawReason}`);
+                                    }
                                 }
                             }
                         } else if ((!sDrone.target_sector) && d.target && d.target.sector) {
