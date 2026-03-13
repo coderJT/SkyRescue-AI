@@ -267,9 +267,11 @@ class SimulationEngine:
         drone.coordinates = (x, y, z)
         drone.status = status
         
-        # Passive hazard discovery + survivor ping on every telemetry update
+        # Passive hazard DISCOVERY only (reveals sector hazard types via onboard sensors).
+        # NOTE: Survivor detection is intentionally NOT done here.
+        # Survivors are ONLY found via explicit thermal_scan() or scan_sector() calls,
+        # which require the drone to be physically present at the sector.
         discovered = drone.scan_surrounding(self.sectors)
-        self._passive_survivor_ping(drone_id)
 
         if clear_target:
             if drone.target_sector and drone.target_sector in self.sectors:
@@ -545,6 +547,24 @@ class SimulationEngine:
         else:
             drone_x, _, drone_z = drone.coordinates
             current_sid = self._get_sector_at(drone_x, drone_z)
+
+        # ── PROXIMITY GUARD ──────────────────────────────────────────────────
+        # The drone must be physically within SCAN_RADIUS of the sector centre.
+        # This prevents remote / ghost scans from marking survivors as found.
+        SCAN_RADIUS = settings.passive_survivor_radius  # same radius used by the frontend
+        sector_center = self.sectors[current_sid]["center"]
+        drone_x, _, drone_z = drone.coordinates
+        dist_to_center = math.hypot(drone_x - sector_center[0], drone_z - sector_center[1])
+        if dist_to_center > SCAN_RADIUS:
+            return {
+                "error": f"Drone {drone_id} is too far from sector {current_sid} centre "
+                         f"({dist_to_center:.1f}u > {SCAN_RADIUS}u). Move closer before scanning.",
+                "drone_position": list(drone.coordinates),
+                "sector_center": list(sector_center),
+                "distance": round(dist_to_center, 1),
+                "required_radius": SCAN_RADIUS,
+            }
+        # ─────────────────────────────────────────────────────────────────────
         
         # Sector-based detection: find all active survivors in the target sector
         detected = []
@@ -706,6 +726,25 @@ class SimulationEngine:
             return {"error": f"Drone {drone_id} is {drone.status}, cannot scan sector"}
 
         cx, cz = sector["center"]
+
+        # ── PROXIMITY GUARD ──────────────────────────────────────────────────
+        # The drone must already be near the sector centre before we allow the
+        # scan to proceed.  This prevents the engine from teleporting a drone
+        # that is on the other side of the map and instantly finding survivors.
+        SCAN_RADIUS = settings.passive_survivor_radius
+        drone_x, _, drone_z = drone.coordinates
+        dist_to_center = math.hypot(drone_x - cx, drone_z - cz)
+        if dist_to_center > SCAN_RADIUS:
+            return {
+                "error": f"Drone {drone_id} is too far from sector {sector_id} centre "
+                         f"({dist_to_center:.1f}u > {SCAN_RADIUS}u). Fly to the sector first.",
+                "drone_position": list(drone.coordinates),
+                "sector_center": [cx, cz],
+                "distance": round(dist_to_center, 1),
+                "required_radius": SCAN_RADIUS,
+            }
+        # ─────────────────────────────────────────────────────────────────────
+
         move_result = self.move_to(drone_id, cx, 5, cz) # elevation 5, horizontal cz
         if "error" in move_result:
             return move_result

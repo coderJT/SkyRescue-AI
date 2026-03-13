@@ -2491,26 +2491,33 @@
 
                             // ─── EN-ROUTE SECTOR LOGIC ────────────────────────────────────────────────────
 
-                            // 1. FLY-OVER PASSIVE SCAN
-                            //    Every time the drone crosses into a new sector while moving, instantly mark it
-                            //    scanned and notify the backend — no stop required.
+                            // 1. FLY-OVER SCAN
+                            //    Track sector transitions. When the drone enters a new sector AND is within
+                            //    SCAN_RADIUS of that sector's centre, fire a thermal scan.
+                            //    This prevents ghost-scans from the sector boundary edge.
                             if (currentSector !== d._lastSector) {
                                 d._lastSector = currentSector;
-                                const sm = sectorMeshes[currentSector];
-                                if (sm && !sm.scanned && d.target.sector !== currentSector) {
-                                    sm.scanned = true;
-                                    sm.mesh.material.color.setHex(currentHazard === "fire" ? 0x2a0a00 : 0x152215);
-                                    sm.mesh.material.opacity = 0.4;
-                                    d.sectorsScanned++;
-                                    addMCP(i, 'call', 'thermal_scan', { drone_id: `drone_${i + 1}`, sector: currentSector }, { status: 'fly_over_scan', hazard: currentHazard });
-                                    addMCP(i, 'call', 'scan_sector', { drone_id: `drone_${i + 1}`, sector_id: currentSector }, { scanned: true, method: 'fly_over' });
-                                    addThought(i, 'info', currentHazard === "fire"
-                                        ? `🔥📡 Fire-zone fly-over scan: ${currentSector} — checking for survivors in blaze.`
-                                        : `📡 Fly-over scan: ${currentSector} cleared en route to ${d.target.sector}.`);
-                                    if (useLLM && mcpClient && mcpClient.connected) {
-                                        mcpClient.callTool('thermal_scan', { drone_id: `drone_${i + 1}`, sector: currentSector }).catch(e => console.warn(e));
-                                        mcpClient.callTool('scan_sector', { drone_id: `drone_${i + 1}`, sector_id: currentSector }).catch(e => console.warn(e));
-                                    }
+                            }
+                            // Compute distance to current sector centre
+                            const _smFlyOver = sectorMeshes[currentSector];
+                            const _sectorCX = curC * CELL + CELL / 2;
+                            const _sectorCZ = curR * CELL + CELL / 2;
+                            const _distToSectorCenter = Math.hypot(p.x - _sectorCX, p.z - _sectorCZ);
+                            const _nearSectorCenter = _distToSectorCenter <= SCAN_RADIUS;
+
+                            if (_nearSectorCenter && _smFlyOver && !_smFlyOver.scanned && d.target.sector !== currentSector) {
+                                _smFlyOver.scanned = true;
+                                _smFlyOver.mesh.material.color.setHex(currentHazard === "fire" ? 0x2a0a00 : 0x152215);
+                                _smFlyOver.mesh.material.opacity = 0.4;
+                                d.sectorsScanned++;
+                                addMCP(i, 'call', 'thermal_scan', { drone_id: `drone_${i + 1}`, sector: currentSector }, { status: 'fly_over_scan', hazard: currentHazard });
+                                addMCP(i, 'call', 'scan_sector', { drone_id: `drone_${i + 1}`, sector_id: currentSector }, { scanned: true, method: 'fly_over' });
+                                addThought(i, 'info', currentHazard === "fire"
+                                    ? `🔥📡 Fire-zone fly-over scan: ${currentSector} — checking for survivors in blaze.`
+                                    : `📡 Fly-over scan: ${currentSector} cleared en route to ${d.target.sector}.`);
+                                if (useLLM && mcpClient && mcpClient.connected) {
+                                    mcpClient.callTool('thermal_scan', { drone_id: `drone_${i + 1}`, sector: currentSector }).catch(e => console.warn(e));
+                                    mcpClient.callTool('scan_sector', { drone_id: `drone_${i + 1}`, sector_id: currentSector }).catch(e => console.warn(e));
                                 }
                             }
 
@@ -2518,33 +2525,37 @@
                             //    If the drone enters a fire sector that is NOT its assigned target, halt the
                             //    original route and queue all non-fire adjacent sectors for a full thermal scan.
                             //    Resumes to the original target once the queue is drained.
+                            //    NOTE: thermal_scan MCP is only called once the drone is near the sector centre.
                             if (currentHazard === "fire" && d.target.sector !== currentSector && !d._originalTarget && !d._fireScanQueue) {
-                                // Immediately scan the fire sector itself for trapped survivors
-                                addMCP(i, 'call', 'thermal_scan', { drone_id: `drone_${i + 1}`, sector: currentSector }, { status: 'fire_zone_survivor_check' });
-                                if (useLLM && mcpClient && mcpClient.connected) {
-                                    mcpClient.callTool('thermal_scan', { drone_id: `drone_${i + 1}`, sector: currentSector }).catch(e => console.warn(e));
-                                }
-                                const fireScanList = [];
-                                for (let dr = -1; dr <= 1; dr++) {
-                                    for (let dc = -1; dc <= 1; dc++) {
-                                        if (dr === 0 && dc === 0) continue;
-                                        const nr = curR + dr, nc = curC + dc;
-                                        if (nr < 0 || nr >= SECTORS || nc < 0 || nc >= SECTORS) continue;
-                                        const sid = `S${nr}_${nc}`;
-                                        const adjHazard = hazardOf(nr, nc);
-                                        if (sectorMeshes[sid] && !sectorMeshes[sid].scanned
-                                            && adjHazard !== "no_fly" && adjHazard !== "fire") {
-                                            fireScanList.push({ r: nr, c: nc, k: sid, x: nc * CELL + CELL / 2, z: nr * CELL + CELL / 2 });
+                                // Only trigger fire-halt logic when drone is near the fire sector centre
+                                if (_nearSectorCenter) {
+                                    // Immediately scan the fire sector itself for trapped survivors
+                                    addMCP(i, 'call', 'thermal_scan', { drone_id: `drone_${i + 1}`, sector: currentSector }, { status: 'fire_zone_survivor_check' });
+                                    if (useLLM && mcpClient && mcpClient.connected) {
+                                        mcpClient.callTool('thermal_scan', { drone_id: `drone_${i + 1}`, sector: currentSector }).catch(e => console.warn(e));
+                                    }
+                                    const fireScanList = [];
+                                    for (let dr = -1; dr <= 1; dr++) {
+                                        for (let dc = -1; dc <= 1; dc++) {
+                                            if (dr === 0 && dc === 0) continue;
+                                            const nr = curR + dr, nc = curC + dc;
+                                            if (nr < 0 || nr >= SECTORS || nc < 0 || nc >= SECTORS) continue;
+                                            const sid = `S${nr}_${nc}`;
+                                            const adjHazard = hazardOf(nr, nc);
+                                            if (sectorMeshes[sid] && !sectorMeshes[sid].scanned
+                                                && adjHazard !== "no_fly" && adjHazard !== "fire") {
+                                                fireScanList.push({ r: nr, c: nc, k: sid, x: nc * CELL + CELL / 2, z: nr * CELL + CELL / 2 });
+                                            }
                                         }
                                     }
-                                }
-                                if (fireScanList.length > 0) {
-                                    addThought(i, 'alert', `🔥 Fire in ${currentSector}! Halting route to ${d.target.sector}. Scanning ${fireScanList.length} adjacent sectors first.`);
-                                    d._originalTarget = d.target;
-                                    d._fireScanQueue = fireScanList;
-                                    const next = d._fireScanQueue.shift();
-                                    d.target = { x: next.x, z: next.z, sector: next.k, hazard: hazardOf(next.r, next.c) };
-                                    // Remain in 'moving' state — drone heads to first adjacent sector
+                                    if (fireScanList.length > 0) {
+                                        addThought(i, 'alert', `🔥 Fire in ${currentSector}! Halting route to ${d.target.sector}. Scanning ${fireScanList.length} adjacent sectors first.`);
+                                        d._originalTarget = d.target;
+                                        d._fireScanQueue = fireScanList;
+                                        const next = d._fireScanQueue.shift();
+                                        d.target = { x: next.x, z: next.z, sector: next.k, hazard: hazardOf(next.r, next.c) };
+                                        // Remain in 'moving' state — drone heads to first adjacent sector
+                                    }
                                 }
                             }
 
