@@ -841,7 +841,7 @@
             </div>
             <div id="thinking-box">
                 <h4><span class="panel-toggle" id="toggle-thoughts"
-                        onclick="togglePanel('thoughts-content', 'toggle-thoughts')">[-]</span> 🧠 CHAIN-OF-THOUGHT
+                        onclick="togglePanel('thoughts-content', 'toggle-thoughts')">[-]</span> 🧠 DRONE THOUGHTS
                     <span id="mcp-toggle" onclick="toggleMCP()">MCP OFF</span>
                 </h4>
                 <div id="thoughts-content">
@@ -1050,7 +1050,9 @@
 
         // ─── THINKING LOG + MCP COMMUNICATIONS ───
         const thoughtLogs = [[], [], [], [], []];
-        const MAX_THOUGHTS = 40;
+        // No hard cap on stored entries — every log is kept so the user can
+        // scroll back to the very first message.  The render function still
+        // auto-scrolls to the bottom for new entries but never discards history.
         let showMCP = false;
 
         // ─── REAL MCP CLIENT over SSE ───
@@ -1172,16 +1174,28 @@
             btn.classList.toggle('active', showMCP);
         };
 
+        const _reasonPrefixes = [
+            '🧠 Let me think... ',
+            '🧠 Okay so... ',
+            '🧠 Hmm, looking at this... ',
+            '🧠 Alright, I see that... ',
+            '🧠 From what I can tell... ',
+            '🧠 Let me figure this out... ',
+            '🧠 Considering the situation... ',
+            '🧠 So here\'s what I\'m seeing... ',
+        ];
+        let _reasonIdx = 0;
+
         function addThought(droneIdx, type, msg) {
             if (missionComplete) return; // Suppress all logs after mission ends
-            let reasonPrefix = useLLM ? '🧠 LLM REASONING: ' : '🧠 LOCAL REASONING: ';
-            const actionPrefix = '⚡ ACTION: ';
+            let reasonPrefix = _reasonPrefixes[_reasonIdx % _reasonPrefixes.length];
+            _reasonIdx++;
             const prefixes = {
-                'action':  actionPrefix,
+                'action':  '',
                 'reason':  reasonPrefix,
-                'danger':  '🚫 DANGER: ',
-                'alert':   '🔥 ALERT: ',
-                'warning': '⚠️ WARNING: ',
+                'danger':  '',
+                'alert':   '',
+                'warning': '',
                 'info':    '   ℹ ',
                 'phase':   '',
                 'system':  '⚙ SYSTEM: ',
@@ -1189,9 +1203,9 @@
 
             // Parse and highlight deep reasoning tags
             if (type === 'reason') {
-                msg = msg.replace(/\[OBSERVATION\]:/g,     '<span class="reason-tag obs-tag">[OBSERVATION]</span>');
-                msg = msg.replace(/\[RISK ASSESSMENT\]:/g, '<span class="reason-tag risk-tag">[RISK ASSESSMENT]</span>');
-                msg = msg.replace(/\[DECISION\]:/g,        '<span class="reason-tag dec-tag">[DECISION]</span>');
+                msg = msg.replace(/\[OBSERVATION\]:/g,     '<span class="reason-tag obs-tag">OBSERVING</span>');
+                msg = msg.replace(/\[RISK ASSESSMENT\]:/g, '<span class="reason-tag risk-tag">RISK CHECK</span>');
+                msg = msg.replace(/\[DECISION\]:/g,        '<span class="reason-tag dec-tag">DECISION</span>');
             }
 
             const formattedMsg = (prefixes[type] || '') + msg;
@@ -1205,15 +1219,13 @@
 
             if (droneIdx === -1) {
                 const t = { id: thoughtId, type, msg: formattedMsg, time: Date.now(), isMCP: false, global: true };
-                for (let i = 0; i < drones.length; i++) { // Use drones.length here
+                for (let i = 0; i < drones.length; i++) {
                     thoughtLogs[i].push(t);
-                    if (thoughtLogs[i].length > MAX_THOUGHTS) thoughtLogs[i].shift();
                 }
                 return;
             }
 
             thoughtLogs[droneIdx].push({ id: thoughtId, type, msg: formattedMsg, time: Date.now(), isMCP: false, global: false });
-            if (thoughtLogs[droneIdx].length > MAX_THOUGHTS) thoughtLogs[droneIdx].shift();
         }
 
         function addMCP(droneIdx, callType, toolName, args, response) {
@@ -1226,16 +1238,16 @@
 
             // ── Human-readable tool call descriptions ──────────────────────────
             const toolDescriptions = {
-                'thermal_scan':       (a) => `🔬 Thermal scan on sector ${a.sector || a.sector_id || '?'}`,
-                'scan_sector':        (a) => `📡 Full sector scan: ${a.sector_id || '?'} (method: ${a.method || 'dedicated'})`,
-                'assign_target':      (a) => `🎯 Assign ${a.drone_id || '?'} → sector ${a.sector_id || '?'}`,
-                'recall_for_charging':(a) => `🔋 Recall ${a.drone_id || '?'} to charging base`,
-                'report_drone_loss':  (a) => `💀 Report loss of ${a.drone_id || '?'} at [${(a.location||[]).join(',')}]`,
-                'add_drone':          (a) => `🚁 Deploy new drone: ${a.drone_id || '?'}`,
-                'finalize_mission':   (a) => `🏁 Finalize mission (goal: ${a.goal || '?'}, time: ${a.completion_time || '?'})`,
-                'log_mission_event':  (a) => `📝 Log: ${a.message || '?'}`,
-                'get_world_state':    ()  => `🌍 Fetch world state`,
-                'start_mission':      (a) => `🚀 Start mission (${a.active_drones || '?'} drones, ${a.survivor_count || '?'} survivors)`,
+                'thermal_scan':       (a) => `🔬 I'm running a thermal scan on sector ${a.sector || a.sector_id || '?'}`,
+                'scan_sector':        (a) => `📡 I'm doing a full sector scan of ${a.sector_id || '?'} (method: ${a.method || 'dedicated'})`,
+                'assign_target':      (a) => `🎯 I'm assigning ${a.drone_id || '?'} to sector ${a.sector_id || '?'}`,
+                'recall_for_charging':(a) => `🔋 I'm recalling ${a.drone_id || '?'} back to the charging base`,
+                'report_drone_loss':  (a) => `💀 I'm reporting the loss of ${a.drone_id || '?'} at [${(a.location||[]).join(',')}]`,
+                'add_drone':          (a) => `🚁 I'm deploying a new drone: ${a.drone_id || '?'}`,
+                'finalize_mission':   (a) => `🏁 I'm finalizing the mission (goal: ${a.goal || '?'}, time: ${a.completion_time || '?'})`,
+                'log_mission_event':  (a) => `📝 I'm logging: ${a.message || '?'}`,
+                'get_world_state':    ()  => `🌍 I'm fetching the world state`,
+                'start_mission':      (a) => `🚀 I'm starting the mission (${a.active_drones || '?'} drones, ${a.survivor_count || '?'} survivors)`,
             };
             const descFn = toolDescriptions[toolName];
             const callDesc = descFn ? descFn(args) : `⚡ ${toolName}(${Object.keys(args||{}).join(', ')})`;
@@ -1246,29 +1258,29 @@
                 // Specific tool summaries
                 if (name === 'thermal_scan') {
                     const cnt = resp.detected_count ?? resp.detected?.length ?? 0;
-                    const bat = resp.battery_after != null ? ` | bat: ${resp.battery_after}%` : '';
+                    const bat = resp.battery_after != null ? ` | my battery is at ${resp.battery_after}%` : '';
                     return cnt > 0
-                        ? `✅ ${cnt} survivor(s) detected${bat}`
-                        : `✅ Sector clear — no survivors${bat}`;
+                        ? `✅ I found ${cnt} survivor(s)!${bat}`
+                        : `✅ Sector looks clear — I don't see any survivors${bat}`;
                 }
                 if (name === 'scan_sector') {
                     const haz = resp.hazard || resp.status || 'clear';
-                    const surv = resp.survivors_in_range != null ? ` | survivors in range: ${resp.survivors_in_range}` : '';
-                    return `✅ Scanned — hazard: ${haz}${surv}`;
+                    const surv = resp.survivors_in_range != null ? ` | I detect ${resp.survivors_in_range} survivors in range` : '';
+                    return `✅ I've scanned it — hazard level: ${haz}${surv}`;
                 }
                 if (name === 'assign_target') {
                     return resp.error
-                        ? `❌ ${resp.error}`
-                        : `✅ Target set → ${resp.target || '?'}`;
+                        ? `❌ Something went wrong: ${resp.error}`
+                        : `✅ Got it, I'm targeting → ${resp.target || '?'}`;
                 }
                 if (name === 'recall_for_charging') {
-                    return `✅ Drone recalled — battery: ${resp.battery ?? '?'}%`;
+                    return `✅ I'm heading back — my battery is at ${resp.battery ?? '?'}%`;
                 }
                 if (name === 'add_drone') {
-                    return `✅ Fleet size now ${resp.fleet_size ?? '?'} | bat: ${resp.battery ?? 100}%`;
+                    return `✅ Fleet is now ${resp.fleet_size ?? '?'} strong | battery: ${resp.battery ?? 100}%`;
                 }
                 if (name === 'start_mission') {
-                    return `✅ Mission active — ${resp.survivor_count ?? '?'} survivors placed`;
+                    return `✅ Mission is live — I've placed ${resp.survivor_count ?? '?'} survivors`;
                 }
                 // Generic: show status or first meaningful key
                 if (resp.status) return `✅ ${resp.status}`;
@@ -1278,13 +1290,10 @@
             }
             const respDesc = summariseResponse(toolName, response);
 
-            const callMsg = `⚡ ACTION: ${callDesc}<br><span style="color:#667788;font-size:8px;">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;INFO&nbsp;&nbsp;&nbsp;&nbsp; Processing request of type CallToolRequest       server.py:720</span>`;
+            const callMsg = `⚡ So I ${callDesc}<br><span style="color:#667788;font-size:8px;">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;INFO&nbsp;&nbsp;&nbsp;&nbsp; Processing request of type CallToolRequest       server.py:720</span>`;
             const respMsg = `   ℹ ${respDesc}`;
             thoughtLogs[droneIdx].push({ type: 'mcp-call', msg: callMsg, time: Date.now(), isMCP: true, global: false });
             thoughtLogs[droneIdx].push({ type: 'mcp-resp', msg: respMsg, time: Date.now() + 1, isMCP: true, global: false });
-            if (thoughtLogs[droneIdx].length > MAX_THOUGHTS) {
-                thoughtLogs[droneIdx] = thoughtLogs[droneIdx].slice(-MAX_THOUGHTS);
-            }
 
             // ACTUALLY execute the tool call on the Python server so it stays in sync
             if (useLLM && mcpClient && mcpClient.connected) {
@@ -1298,10 +1307,14 @@
 
         function renderThoughts() {
             const el = document.getElementById('thoughts');
+            const parent = el.parentElement;
+
+            // ── Collect entries ──────────────────────────────────────────────
             let entries = [];
             if (activeDrone >= 0) {
                 entries = thoughtLogs[activeDrone].map(t => ({ ...t, drone: activeDrone }));
             } else {
+                // "All drones" view — merge all logs, deduplicate global entries
                 const seenGlobalIds = new Set();
                 for (let i = 0; i < drones.length; i++) {
                     thoughtLogs[i].forEach(t => {
@@ -1313,29 +1326,40 @@
                     });
                 }
                 entries.sort((a, b) => a.time - b.time || (a.id - b.id));
-                entries = entries.slice(-MAX_THOUGHTS);
+                // No slice — keep ALL entries so the user can scroll to the very first log
             }
+
             // Filter MCP entries based on toggle
             if (!showMCP) entries = entries.filter(t => !t.isMCP);
+
+            // ── Build HTML ───────────────────────────────────────────────────
             let html = '';
             entries.forEach(t => {
                 if (t.global) {
                     html += `<div class="thought-entry ${t.type}">${t.msg}</div>`;
                 } else {
-                    const color = DRONE_COLORS[t.drone];
-                    const tag = `<span class="thought-drone-tag" style="background:${color}22;color:${color}">${DRONE_NAMES[t.drone]}</span>`;
+                    const color = DRONE_COLORS[t.drone] || '#aaa';
+                    const name  = DRONE_NAMES[t.drone]  || `drone_${t.drone + 1}`;
+                    const tag   = `<span class="thought-drone-tag" style="background:${color}22;color:${color}">${name}</span>`;
                     html += `<div class="thought-entry ${t.type}">${tag} ${t.msg}</div>`;
                 }
             });
-            // Check if user is scrolled to the bottom before rendering
-            const parent = el.parentElement;
-            const isAtBottom = parent.scrollHeight - parent.scrollTop <= parent.clientHeight + 10;
 
+            // ── Preserve scroll position ─────────────────────────────────────
+            // Only auto-scroll to the bottom when the user is already at (or near) the bottom.
+            // If they have scrolled up to read old logs, leave the viewport exactly where it is.
+            const distFromBottom = parent.scrollHeight - parent.scrollTop - parent.clientHeight;
+            const wasAtBottom = distFromBottom <= 40; // 40 px tolerance
+
+            const prevScrollTop = parent.scrollTop;
             el.innerHTML = html;
 
-            // Only auto-scroll if they were already at the bottom
-            if (isAtBottom) {
+            if (wasAtBottom) {
+                // New entry arrived and user was at bottom — follow it
                 parent.scrollTop = parent.scrollHeight;
+            } else {
+                // User is reading history — restore their scroll position
+                parent.scrollTop = prevScrollTop;
             }
         }
 
@@ -2037,7 +2061,7 @@
             const mcpHtml = ` <span id="mcp-toggle" class="${showMCP ? 'active' : ''}" onclick="toggleMCP()">${showMCP ? 'MCP ON' : 'MCP OFF'}</span>`;
             const isHidden = document.getElementById('thoughts-content').style.display === 'none';
             const toggleHtml = `<span class="panel-toggle" id="toggle-thoughts" onclick="togglePanel('thoughts-content', 'toggle-thoughts')">${isHidden ? '[+]' : '[-]'}</span> `;
-            thinkBox.innerHTML = toggleHtml + (idx >= 0 ? `🧠 ${DRONE_NAMES[idx]} THINKING` : '🧠 CHAIN-OF-THOUGHT (ALL)') + mcpHtml;
+            thinkBox.innerHTML = toggleHtml + (idx >= 0 ? `🧠 ${DRONE_NAMES[idx]}'s THOUGHTS` : '🧠 DRONE THOUGHTS') + mcpHtml;
             // Set world view camera
             if (idx === -2) {
                 cam.position.set(GRID / 2, 320, GRID / 2 + 20);
@@ -2082,14 +2106,14 @@
             d.target = { x: BASE.x, z: BASE.z, sector: null, hazard: 'clear' };
             d.state = 'moving';
             addMCP(idx, 'call', 'recall_for_charging', { drone_id: `drone_${idx + 1}` }, { status: 'manual_rtb', base: [BASE.x, BASE.z] });
-            addThought(idx, 'action', `🔋 Manual recall — returning to charging station.`);
+            addThought(idx, 'action', `🔋 Got a manual recall — heading back to the charging station now.`);
         };
 
         // Add a new drone to the fleet
         window.addNewDrone = async function () {
             if (!missionStarted) {
                 alert('Please start the mission first before adding drones.');
-                addThought(-1, 'system', 'Cannot add drone: Mission not started');
+                addThought(-1, 'system', 'Can\'t add a drone right now — the mission hasn\'t started yet');
                 return;
             }
 
@@ -2227,7 +2251,7 @@
             console.log(`[Add Drone] Fleet size now: ${drones.length}`);
 
             // Log the addition
-            addThought(-1, 'action', `🚁 NEW DRONE ADDED: ${droneId} deployed at base with 100% battery`);
+            addThought(-1, 'action', `🚁 New drone deployed! ${droneId} is at base with a full battery.`);
             addMCP(newIdx, 'call', 'add_drone', { drone_id: droneId }, { status: 'deployed', battery: 100, fleet_size: drones.length });
 
             showAlertDialog(`🚁 NEW DRONE DEPLOYED! Fleet size: ${drones.length}`);
@@ -2426,7 +2450,7 @@
                                     d.state = "waiting_orders";
                                     if (!assignmentQueue.includes(i)) {
                                         assignmentQueue.push(i);
-                                        addThought(i, 'info', `Waiting for swarm coordinator...`);
+                                        addThought(i, 'info', `Waiting on the swarm coordinator for my next orders...`);
                                     }
                                 }
                             }, wakeUpDelay);
@@ -2435,7 +2459,7 @@
                             if (s) {
                                 d.target = { x: s.c * CELL + CELL / 2, z: s.r * CELL + CELL / 2, sector: s.k, hazard: s.hazard };
                                 d.state = "moving";
-                                addThought(i, 'action', `Waking up from standby. Moving to ${s.k}...`);
+                                addThought(i, 'action', `Woke up from standby — heading to ${s.k} now.`);
                             }
                         }
                     }
@@ -2459,7 +2483,7 @@
                         d.group.position.y = 0.5; // crash to ground
                         d.group.children[0].material.color.setHex(0x330000);
                         d.group.children[0].material.emissive.setHex(0x110000);
-                        addThought(i, 'danger', `⚠️ BATTERY DEPLETED — drone down at (${d.group.position.x.toFixed(0)}, ${d.group.position.z.toFixed(0)})!`);
+                        addThought(i, 'danger', `⚠️ Battery's completely dead — going down at (${d.group.position.x.toFixed(0)}, ${d.group.position.z.toFixed(0)})!`);
                         addMCP(i, 'call', 'report_drone_loss', { drone_id: `drone_${i + 1}`, location: [Math.round(d.group.position.x), Math.round(d.group.position.z)] }, { status: 'crashed', battery: 0 });
                         return;
                     }
@@ -2473,8 +2497,7 @@
                                 scanSpheres[i].position.copy(d.group.position);
                                 return;
                             }
-                            addThought(i, 'action', `Recharged to 100%. Ready for deployment.`);
-                            addThought(i, 'action', `Recharged to 100%. Ready for deployment.`);
+                            addThought(i, 'action', `Fully recharged! Ready to get back out there.`);
                             // Waiting for external command via syncWithServer
                             d.state = "idle";
                         }
@@ -2506,7 +2529,7 @@
                             dirZ += steer.z;
 
                             if (steer.blocked && d.avoidCount % 120 === 0) {
-                                addThought(i, 'warning', `Obstacle nearby — adjusting course...`);
+                                addThought(i, 'warning', `Obstacle nearby — adjusting course to get around it...`);
                             }
                             if (steer.x !== 0 || steer.z !== 0) d.avoidCount++;
                             else d.avoidCount = 0;
@@ -2520,7 +2543,7 @@
                                     d.escapeTimer = 240;
                                     d.targetHeight = 25; // Rise higher than any tree
                                     d.battery -= 5.0; // Battery penalty for climbing
-                                    addThought(i, 'danger', `STUCK — Climbing to 25u to clear canopy (5% bat penalty).`);
+                                    addThought(i, 'danger', `Stuck! Climbing to 25u to clear the canopy — gonna cost me 5% battery.`);
                                 }
                                 d.stuckCheck = { x: p.x, z: p.z, frame: frameCount };
                             }
@@ -2531,7 +2554,7 @@
                                 if (d.escapeTimer === 0) {
                                     d.escapeMode = "none";
                                     d.targetHeight = d.defaultHeight;
-                                    addThought(i, 'action', `Clear of obstacle. Resuming standard flight.`);
+                                    addThought(i, 'action', `Cleared the obstacle — back to standard flight.`);
                                 }
                             }
 
@@ -2577,8 +2600,8 @@
                                 addMCP(i, 'call', 'thermal_scan', { drone_id: `drone_${i + 1}`, sector: currentSector }, { status: 'fly_over_scan', hazard: currentHazard });
                                 addMCP(i, 'call', 'scan_sector', { drone_id: `drone_${i + 1}`, sector_id: currentSector }, { scanned: true, method: 'fly_over' });
                                 addThought(i, 'info', currentHazard === "fire"
-                                    ? `🔥📡 Fire-zone fly-over scan: ${currentSector} — checking for survivors in blaze.`
-                                    : `📡 Fly-over scan: ${currentSector} cleared en route to ${d.target.sector}.`);
+                                    ? `🔥📡 Flying over a fire zone in ${currentSector} — scanning for trapped survivors.`
+                                    : `📡 Quick fly-over scan of ${currentSector} while passing through to ${d.target.sector}.`);
                                 if (useLLM && mcpClient && mcpClient.connected) {
                                     mcpClient.callTool('thermal_scan', { drone_id: `drone_${i + 1}`, sector: currentSector }).catch(e => console.warn(e));
                                     mcpClient.callTool('scan_sector', { drone_id: `drone_${i + 1}`, sector_id: currentSector }).catch(e => console.warn(e));
@@ -2613,7 +2636,7 @@
                                         }
                                     }
                                     if (fireScanList.length > 0) {
-                                        addThought(i, 'alert', `🔥 Fire in ${currentSector}! Halting route to ${d.target.sector}. Scanning ${fireScanList.length} adjacent sectors first.`);
+                                        addThought(i, 'alert', `🔥 Hit fire in ${currentSector}! Halting my route to ${d.target.sector} — need to scan ${fireScanList.length} adjacent sectors first.`);
                                         d._originalTarget = d.target;
                                         d._fireScanQueue = fireScanList;
                                         const next = d._fireScanQueue.shift();
@@ -2636,7 +2659,7 @@
                                 );
                                 if (isSectorAlreadyTargeted) {
                                     // Another drone is already targeting this sector, continue to our target
-                                    addThought(i, 'info', `📡 Sector ${currentSector} already targeted by another drone. Continuing to ${d.target.sector}.`);
+                                    addThought(i, 'info', `📡 Looks like ${currentSector} is already being handled by another drone — continuing to ${d.target.sector}.`);
                                     // Continue with existing target
                                 } else {
                                 // Check for unfound survivors in this sector
@@ -2661,7 +2684,7 @@
                                         // Only stop for opportunistic rescue if we're close to target (within 3 sectors)
                                         // or if explicitly configured to be more aggressive
                                         if (sectorDist <= 3) {
-                                            addThought(i, 'alert', `SIGNAL DETECTED! Intercepting survivors in ${currentSector} while en route to ${d.target.sector}...`);
+                                            addThought(i, 'alert', `Picking up a signal! Survivors might be in ${currentSector} — intercepting on my way to ${d.target.sector}...`);
                                             d._originalTarget = d.target;
                                             d.target = { x: curC * CELL + CELL / 2, z: curR * CELL + CELL / 2, sector: currentSector };
                                             d.state = "scanning";
@@ -2686,7 +2709,7 @@
                                 if (useLLM && mcpClient && mcpClient.connected) {
                                     mcpClient.callTool('assign_target', { drone_id: `drone_${i + 1}`, sector_id: '__RECALL__' }).catch(e => console.warn(e));
                                 }
-                                addThought(i, 'danger', `Battery ${d.battery.toFixed(0)}% — est. ${batteryToReturn.toFixed(0)}% needed to RTB. Returning NOW!`);
+                                addThought(i, 'danger', `Battery's at ${d.battery.toFixed(0)}% — need about ${batteryToReturn.toFixed(0)}% to make it back. Returning NOW!`);
                                 d.target = { x: BASE.x, z: BASE.z, sector: null, hazard: "clear" };
                                 d.state = "moving";
                             }
@@ -2694,7 +2717,7 @@
                             if (d.target.sector) {
                                 d.state = "scanning"; d.scanTimer = 0;
                                 addMCP(i, 'call', 'thermal_scan', { drone_id: `drone_${i + 1}`, sector: d.target.sector }, { status: 'scanning', radius: SCAN_RADIUS });
-                                addThought(i, 'action', `Reached sector ${d.target.sector}. Deploying thermal scan (radius: ${SCAN_RADIUS}u)...`);
+                                addThought(i, 'action', `Reached ${d.target.sector} — deploying thermal scan (radius: ${SCAN_RADIUS}u)...`);
                             } else {
                                 // Reached base
                                 if (missionComplete) {
@@ -2703,7 +2726,7 @@
                                 } else {
                                     d.recharging = true; d.state = "idle";
                                     addMCP(i, 'call', 'recall_for_charging', { drone_id: `drone_${i + 1}` }, { status: 'charging', base: [BASE.x, BASE.z] });
-                                    addThought(i, 'action', `At base. Charging...`);
+                                    addThought(i, 'action', `Back at base — charging up.`);
                                 }
                             }
                         }
@@ -2727,7 +2750,7 @@
                                 if (qs) qs.assigned = false;
 
                                 addMCP(i, 'call', 'scan_sector', { drone_id: `drone_${i + 1}`, sector_id: d.target.sector }, { scanned: true, survivors_in_range: survivorMeshes.filter(s => s.found).length });
-                                addThought(i, 'info', `Scan done: ${d.target.sector}. Bat: ${d.battery.toFixed(0)}%. Total: ${d.sectorsScanned} sectors.`);
+                                addThought(i, 'info', `Done scanning ${d.target.sector}. Battery at ${d.battery.toFixed(0)}%, ${d.sectorsScanned} sectors covered so far.`);
                                 d.battery -= 0.2; // Drain exactly once for the scan
 
                                 if (d._fireScanQueue && d._fireScanQueue.length > 0) {
@@ -2735,7 +2758,7 @@
                                     const next = d._fireScanQueue.shift();
                                     d.target = { x: next.x, z: next.z, sector: next.k, hazard: hazardOf(next.r, next.c) };
                                     d.state = "moving";
-                                    addThought(i, 'action', `🔥 Fire-area scan: moving to adjacent sector ${next.k}.`);
+                                    addThought(i, 'action', `🔥 Continuing fire-area scan — next up is sector ${next.k}.`);
                                 } else if (d._originalTarget) {
                                     // Queue drained (fire diversion) or opportunistic rescue done — restore original route
                                     const prevTarget = d.target.sector;
@@ -2745,8 +2768,8 @@
                                     d._fireScanQueue = null;
                                     d.state = "moving";
                                     addThought(i, 'action', wasFireScan
-                                        ? `🔥 Fire-area scan complete (${prevTarget}). Resuming route to ${d.target.sector}.`
-                                        : `Rescue complete in ${prevTarget}. Resuming flight to ${d.target.sector}.`);
+                                        ? `🔥 Fire-area scan around ${prevTarget} is done. Getting back on track to ${d.target.sector}.`
+                                        : `Rescue in ${prevTarget} wrapped up — resuming course to ${d.target.sector}.`);
                                 } else {
                                     d.state = "idle"; // RESET TO IDLE SO AGENT CAN REASSIGN
                                     d.target.sector = null;
@@ -2760,7 +2783,7 @@
                                 d.group.position.y = 0.5;
                                 d.group.children[0].material.color.setHex(0x330000);
                                 d.group.children[0].material.emissive.setHex(0x110000);
-                                addThought(i, 'danger', `⚠️ BATTERY DEPLETED during scan — drone down!`);
+                                addThought(i, 'danger', `⚠️ Battery died mid-scan — going down!`);
                                 return;
                             }
 
@@ -2775,13 +2798,13 @@
                                     if (!allD.dead) {
                                         allD.target = { x: BASE.x, z: BASE.z, sector: null, hazard: "clear" };
                                         allD.state = "moving";
-                                        if (dIdx === i) addThought(dIdx, 'info', `Mission Objective Met [${missionGoal}]. Fleet returning to base.`);
+                                        if (dIdx === i) addThought(dIdx, 'info', `Mission objective met [${missionGoal}] — heading back to base with the fleet.`);
                                     }
                                 });
                                 const totalTime = formatTime((performance.now() - missionStartTime - totalPausedTime) / 1000);
                                 addThought(-1, 'phase', 'PHASE 4: MISSION COMPLETE — Summary');
-                                addThought(-1, 'info', `Final Goal Progress: ${missionGoal === 'scanAll' ? (scanned + '/' + scannable + ' sectors') : (totalFound + '/' + totalSurvivorsInitially + ' survivors')}`);
-                                addThought(i, 'alert', `🎯 MISSION SUCCESS! [Total Time: ${totalTime}]`);
+                                addThought(-1, 'info', `Final progress: ${missionGoal === 'scanAll' ? (scanned + '/' + scannable + ' sectors') : (totalFound + '/' + totalSurvivorsInitially + ' survivors')}`);
+                                addThought(i, 'alert', `🎯 Mission successful! [Total Time: ${totalTime}]`);
                                 addMCP(i, 'call', 'finalize_mission', { completion_time: totalTime, goal: missionGoal }, { status: 'mission_complete' });
                                 document.getElementById('final-time').textContent = totalTime;
                                 document.getElementById('final-found').textContent = `${totalFound}/${totalSurvivorsInitially}`;
@@ -2797,7 +2820,7 @@
                                     }
                                 } else {
                                     d.state = "waiting_orders";
-                                    addThought(i, 'danger', `Local brain deactivated. Waiting for MCP...`);
+                                    addThought(i, 'danger', `Local brain is off — standing by for the MCP coordinator...`);
                                 }
                             } else {
                                 d.state = "moving"; // Returning to base
@@ -2920,7 +2943,7 @@
         // ─── MCP SYNC LOOP ───
         let isSyncing = false;
         async function syncWithServer() {
-            if (isSyncing || !mcpClient || !mcpClient.connected) return;
+            if (isPaused || isSyncing || !mcpClient || !mcpClient.connected) return;
             isSyncing = true;
             try {
                 // Report drone telemetry to engine (drones report their position/battery back)
@@ -2957,7 +2980,7 @@
                             if (entry.includes("🧠 STRATEGY:")) {
                                 const strat = entry.split("🧠 STRATEGY:")[1].trim();
                                 const exists = thoughtLogs.some(log => log.some(t => t.msg.includes(strat)));
-                                if (!exists) addThought(-1, 'phase', `🧠 STRATEGY: ${strat}`);
+                                if (!exists) addThought(-1, 'phase', `🧠 Strategy decided: ${strat}`);
                             }
 
                             // ── Per-drone structured reasoning ─────────────────────────
@@ -3064,7 +3087,7 @@
                         missionComplete = true;
                         const totalTime = formatTime(world.elapsed_seconds);
                         addThought(-1, 'phase', 'PHASE 4: MISSION COMPLETE — Summary');
-                        addThought(-1, 'alert', `🎯 MISSION SUCCESS! [Total Time: ${totalTime}]`);
+                        addThought(-1, 'alert', `🎯 Mission successful! [Total Time: ${totalTime}]`);
                         document.getElementById('final-time').textContent = totalTime;
                         document.getElementById('final-found').textContent = `${world.found_survivors}/${world.total_survivors}`;
                         document.getElementById('final-sectors').textContent = `${world.sectors_scanned}/${world.total_scannable_sectors}`;
@@ -3323,10 +3346,10 @@
             });
 
             // ── Thought log ──
-            addThought(-1, 'phase', 'PHASE 1: DISCOVERY — Fleet & Environment Reconnaissance');
-            addThought(-1, 'action', 'Calling list_drones() to discover fleet on network...');
-            addThought(-1, 'info', `Discovered ${drones.length} drones: ${DRONE_NAMES.slice(0, drones.length).join(', ')}`);
-            addThought(-1, 'phase', 'PHASE 2: DEPLOYMENT — Initializing Swarm');
+            addThought(-1, 'phase', 'PHASE 1: DISCOVERY — Scouting the fleet & environment');
+            addThought(-1, 'action', 'Calling list_drones() to see what we\'ve got on the network...');
+            addThought(-1, 'info', `Found ${drones.length} drones: ${DRONE_NAMES.slice(0, drones.length).join(', ')}`);
+            addThought(-1, 'phase', 'PHASE 2: DEPLOYMENT — Initializing the swarm');
 
             document.getElementById('start-btn').style.display = 'none';
             document.getElementById('surv-count').disabled = true;
@@ -3345,7 +3368,7 @@
                     });
                     if (resp && resp.content && resp.content.length > 0) {
                         const result = JSON.parse(resp.content[0].text);
-                        addThought(-1, 'info', `Engine started: ${result.total_survivors} survivors placed, hazards generated.`);
+                        addThought(-1, 'info', `Engine started — ${result.total_survivors} survivors placed, hazards generated.`);
                     }
                 } catch (e) {
                     console.error("Failed to start mission via MCP:", e);
@@ -3378,7 +3401,7 @@
                 }
             }
 
-            addThought(-1, 'info', 'Strategy: Prioritize fire-adjacent sectors where survivors are most likely trapped.');
+            addThought(-1, 'info', 'Strategy: prioritize fire-adjacent sectors — survivors are most likely trapped there.');
             addThought(-1, 'phase', 'PHASE 3: EXECUTION — Autonomous wildfire search sweep');
 
             // Start sync loop
