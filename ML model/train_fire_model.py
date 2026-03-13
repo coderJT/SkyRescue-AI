@@ -1,8 +1,10 @@
 import argparse
 import csv
+import shutil
 from pathlib import Path
 from typing import Dict, Any
 
+import joblib
 import yaml
 from ultralytics import YOLO
 
@@ -84,6 +86,31 @@ def log_training_report(run_dir: Path, dataset_cfg: Dict[str, Any], best_weights
     print("======================")
 
 
+def dump_trained_model(best_weights: Path, output_model: Path) -> Path:
+    """Copy the trained best weights to a stable output file path."""
+    if not best_weights.exists():
+        raise FileNotFoundError(f"Trained weights not found: {best_weights}")
+
+    output_model.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(best_weights, output_model)
+    return output_model
+
+
+def dump_trained_model_joblib(best_weights: Path, output_joblib: Path) -> Path:
+    """Serialize the trained weights payload into a joblib file."""
+    if not best_weights.exists():
+        raise FileNotFoundError(f"Trained weights not found: {best_weights}")
+
+    output_joblib.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "format": "yolo-weights-bytes",
+        "source_weights_path": str(best_weights.resolve()),
+        "weights_bytes": best_weights.read_bytes(),
+    }
+    joblib.dump(payload, output_joblib, compress=3)
+    return output_joblib
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Train fire detection model using YOLOv8.")
     parser.add_argument(
@@ -112,6 +139,18 @@ def main() -> None:
         type=str,
         default="fire_detector",
         help="Run name inside project directory",
+    )
+    parser.add_argument(
+        "--output-model",
+        type=Path,
+        default=Path("ML model") / "artifacts" / "fire_model_best.pt",
+        help="File path to dump the final trained model",
+    )
+    parser.add_argument(
+        "--output-joblib",
+        type=Path,
+        default=Path("ML model") / "artifacts" / "fire_model_best.joblib",
+        help="File path to dump the final trained model as a joblib artifact",
     )
 
     args = parser.parse_args()
@@ -142,8 +181,15 @@ def main() -> None:
     best_weights = run_dir / "weights" / "best.pt"
     log_training_report(run_dir=run_dir, dataset_cfg=source_cfg, best_weights=best_weights)
 
+    output_model = args.output_model if args.output_model.is_absolute() else repo_root / args.output_model
+    dumped_model_path = dump_trained_model(best_weights=best_weights, output_model=output_model)
+    output_joblib = args.output_joblib if args.output_joblib.is_absolute() else repo_root / args.output_joblib
+    dumped_joblib_path = dump_trained_model_joblib(best_weights=best_weights, output_joblib=output_joblib)
+
     print("\nTraining complete.")
     print(f"Best model path: {best_weights.resolve()}")
+    print(f"Dumped model file: {dumped_model_path.resolve()}")
+    print(f"Dumped joblib file: {dumped_joblib_path.resolve()}")
     print(f"Metrics summary: {results.results_dict if hasattr(results, 'results_dict') else 'N/A'}")
 
 

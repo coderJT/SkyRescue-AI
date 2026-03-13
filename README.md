@@ -168,6 +168,11 @@ This script starts the MCP server and automatically opens the 3D simulation in y
 # Set your Mistral API key
 export MISTRAL_API_KEY=your_api_key_here
 
+# For windows user
+set MISTRAL_API_KEY=your_api_key_here
+# For env
+$env:MISTRAL_API_KEY=your_api_key_here
+
 # Start the server + UI
 python start.py
 ```
