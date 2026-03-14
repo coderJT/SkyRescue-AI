@@ -12,9 +12,9 @@
             right: 12px;
             z-index: 20;
             pointer-events: auto;
-            background: rgba(10, 15, 30, 0.9);
-            color: #ff8800;
-            border: 1px solid rgba(255,136,0,0.4);
+            background: rgba(15, 25, 45, 0.95);
+            color: #4a9eff;
+            border: 1px solid rgba(74,158,255,0.4);
             padding: 6px 10px;
             border-radius: 6px;
             cursor: pointer;
@@ -28,8 +28,8 @@
             width: 260px;
             max-height: 70vh;
             overflow-y: auto;
-            background: rgba(6, 8, 15, 0.92);
-            border: 1px solid rgba(255,136,0,0.35);
+            background: rgba(12, 20, 35, 0.95);
+            border: 1px solid rgba(74,158,255,0.35);
             border-radius: 8px;
             padding: 10px;
             color: #d9e1ee;
@@ -42,7 +42,7 @@
 
         #settings-panel h3 {
             margin-bottom: 8px;
-            color: #ffb366;
+            color: #6bb6ff;
             font-size: 13px;
             text-transform: uppercase;
             letter-spacing: 1px;
@@ -60,7 +60,7 @@
         .settings-row input {
             width: 90px;
             background: rgba(255,255,255,0.05);
-            border: 1px solid rgba(255,136,0,0.25);
+            border: 1px solid rgba(74,158,255,0.25);
             color: #d9e1ee;
             padding: 4px;
             border-radius: 4px;
@@ -69,9 +69,9 @@
 
         .settings-actions { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
         #settings-save {
-            background: #ff8800;
+            background: #4a9eff;
             border: none;
-            color: #0a0a0f;
+            color: #0a1620;
             padding: 6px 10px;
             border-radius: 5px;
             cursor: pointer;
@@ -88,7 +88,7 @@
 
         body {
             overflow: hidden;
-            background: #0a0a0f;
+            background: #0d1520;
             font-family: 'Segoe UI', system-ui, sans-serif;
         }
 
@@ -107,12 +107,12 @@
             top: 12px;
             left: 50%;
             transform: translateX(-50%);
-            color: #ff6600;
+            color: #4a9eff;
             font-size: 15px;
             font-weight: 700;
             text-transform: uppercase;
             letter-spacing: 3px;
-            text-shadow: 0 0 20px rgba(255, 100, 0, 0.5);
+            text-shadow: 0 0 20px rgba(74, 158, 255, 0.5);
         }
 
         #cam-panel {
@@ -126,9 +126,9 @@
         }
 
         .cam-btn {
-            background: rgba(10, 15, 30, 0.85);
-            border: 1px solid rgba(255, 100, 0, 0.3);
-            color: #8899aa;
+            background: rgba(15, 25, 45, 0.9);
+            border: 1px solid rgba(74, 158, 255, 0.3);
+            color: #8aaacc;
             padding: 6px 12px;
             border-radius: 5px;
             cursor: pointer;
@@ -139,16 +139,16 @@
         }
 
         .cam-btn:hover {
-            background: rgba(255, 100, 0, 0.15);
-            color: #ff8800;
-            border-color: #ff8800;
+            background: rgba(74, 158, 255, 0.15);
+            color: #4a9eff;
+            border-color: #4a9eff;
         }
 
         .cam-btn.active {
-            background: rgba(255, 100, 0, 0.2);
-            color: #ff8800;
-            border-color: #ff8800;
-            box-shadow: 0 0 10px rgba(255, 100, 0, 0.2);
+            background: rgba(74, 158, 255, 0.2);
+            color: #4a9eff;
+            border-color: #4a9eff;
+            box-shadow: 0 0 10px rgba(74, 158, 255, 0.2);
         }
 
         #right-panel {
@@ -163,14 +163,14 @@
         }
 
         #minimap-box {
-            background: rgba(10, 15, 30, 0.92);
-            border: 1px solid rgba(255, 100, 0, 0.2);
+            background: rgba(15, 25, 45, 0.95);
+            border: 1px solid rgba(74, 158, 255, 0.25);
             border-radius: 8px;
             padding: 10px;
         }
 
         #minimap-box h4 {
-            color: #ff8800;
+            color: #4a9eff;
             font-size: 11px;
             margin-bottom: 6px;
             letter-spacing: 1.5px;
@@ -195,7 +195,7 @@
             align-items: center;
             gap: 8px;
             font-size: 9px;
-            color: #8899aa;
+            color: #8aaacc;
             text-transform: uppercase;
             letter-spacing: 0.5px;
         }
@@ -379,9 +379,9 @@
         }
 
         .risk-tag {
-            background: rgba(255, 170, 0, 0.18);
-            color: #ffaa00;
-            border: 1px solid rgba(255, 170, 0, 0.35);
+            background: rgba(100, 180, 255, 0.18);
+            color: #64b4ff;
+            border: 1px solid rgba(100, 180, 255, 0.35);
         }
 
         .dec-tag {
@@ -406,21 +406,21 @@
             cursor: pointer;
             font-size: 9px;
             font-weight: 600;
-            border: 1px solid #009988;
-            color: #44ccbb;
-            background: rgba(0, 153, 136, 0.1);
+            border: 1px solid #4a9eff;
+            color: #6bb6ff;
+            background: rgba(74, 158, 255, 0.1);
             pointer-events: auto;
             transition: all 0.2s;
             vertical-align: middle;
         }
 
         #mcp-toggle:hover {
-            background: rgba(0, 153, 136, 0.25);
+            background: rgba(74, 158, 255, 0.25);
         }
 
         #mcp-toggle.active {
-            background: rgba(0, 153, 136, 0.3);
-            box-shadow: 0 0 8px rgba(0, 153, 136, 0.3);
+            background: rgba(74, 158, 255, 0.3);
+            box-shadow: 0 0 8px rgba(74, 158, 255, 0.3);
         }
 
         #status {
@@ -560,8 +560,8 @@
             position: absolute;
             pointer-events: none;
             z-index: 15;
-            background: rgba(10, 15, 30, 0.88);
-            border: 1px solid rgba(255, 140, 0, 0.4);
+            background: rgba(15, 25, 45, 0.92);
+            border: 1px solid rgba(74, 158, 255, 0.4);
             border-radius: 5px;
             padding: 4px 8px;
             font-size: 9px;
@@ -599,8 +599,8 @@
             position: absolute;
             bottom: 20px;
             right: 20px;
-            background: rgba(10, 15, 30, 0.9);
-            border: 2px solid #ff8800;
+            background: rgba(15, 25, 45, 0.95);
+            border: 2px solid #4a9eff;
             padding: 20px;
             border-radius: 12px;
             text-align: center;
@@ -609,15 +609,15 @@
             flex-direction: column;
             align-items: center;
             gap: 15px;
-            box-shadow: 0 0 20px rgba(255, 100, 0, 0.3);
+            box-shadow: 0 0 20px rgba(74, 158, 255, 0.3);
             pointer-events: auto;
             backdrop-filter: blur(8px);
         }
 
         #mission-goal {
-            background: #1a2233;
-            color: #00ff88;
-            border: 1px solid #ff8800;
+            background: #1a2a40;
+            color: #00cc88;
+            border: 1px solid #4a9eff;
             padding: 8px 15px;
             border-radius: 6px;
             cursor: pointer;
@@ -630,7 +630,7 @@
         }
 
         #mission-goal:hover {
-            border-color: #ffaa00;
+            border-color: #6bb6ff;
         }
 
         #mission-goal:disabled {
@@ -656,8 +656,8 @@
         }
 
         #start-btn {
-            background: linear-gradient(135deg, #ff6600, #ff3300);
-            border: 2px solid #ff8800;
+            background: linear-gradient(135deg, #4a9eff, #2a6fcc);
+            border: 2px solid #6bb6ff;
             color: #fff;
             padding: 16px 40px;
             border-radius: 10px;
@@ -667,13 +667,13 @@
             font-family: inherit;
             letter-spacing: 3px;
             text-transform: uppercase;
-            box-shadow: 0 0 30px rgba(255, 100, 0, 0.3), 0 4px 15px rgba(0, 0, 0, 0.4);
+            box-shadow: 0 0 30px rgba(74, 158, 255, 0.3), 0 4px 15px rgba(0, 0, 0, 0.4);
             transition: all 0.3s;
         }
 
         #start-btn:hover {
             transform: scale(1.05);
-            box-shadow: 0 0 50px rgba(255, 100, 0, 0.6);
+            box-shadow: 0 0 50px rgba(74, 158, 255, 0.5);
         }
 
         .goal-label {
@@ -700,15 +700,15 @@
         }
 
         #success-content {
-            background: linear-gradient(135deg, rgba(30, 40, 60, 0.9), rgba(10, 15, 25, 0.95));
-            border: 2px solid #00ff88;
+                background: linear-gradient(135deg, rgba(30, 50, 80, 0.95), rgba(15, 25, 45, 0.98));
+            border: 2px solid #4a9eff;
             border-radius: 20px;
             padding: 40px;
             text-align: center;
             color: #fff;
             max-width: 450px;
             width: 90%;
-            box-shadow: 0 0 50px rgba(0, 255, 136, 0.3);
+            box-shadow: 0 0 50px rgba(74, 158, 255, 0.3);
             animation: popIn 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275);
         }
 
@@ -777,21 +777,21 @@
         <div id="title">Forest Wildfire Rescue</div>
         <div id="cam-panel">
             <button class="cam-btn active" onclick="switchCam(-1)">🌐 Overview <span
-                    style="color:#445;font-size:9px">[0]</span></button>
+                    style="color:#4a6a99;font-size:9px">[0]</span></button>
             <button class="cam-btn drone-cam-btn" onclick="switchCam(0)" style="display:none">🛩 Drone 1 <span
-                    style="color:#445;font-size:9px">[1]</span></button>
+                    style="color:#4a6a99;font-size:9px">[1]</span></button>
             <button class="cam-btn drone-cam-btn" onclick="switchCam(1)" style="display:none">🛩 Drone 2 <span
-                    style="color:#445;font-size:9px">[2]</span></button>
+                    style="color:#4a6a99;font-size:9px">[2]</span></button>
             <button class="cam-btn drone-cam-btn" onclick="switchCam(2)" style="display:none">🛩 Drone 3 <span
-                    style="color:#445;font-size:9px">[3]</span></button>
+                    style="color:#4a6a99;font-size:9px">[3]</span></button>
             <button class="cam-btn drone-cam-btn" onclick="switchCam(3)" style="display:none">🛩 Drone 4 <span
-                    style="color:#445;font-size:9px">[4]</span></button>
+                    style="color:#4a6a99;font-size:9px">[4]</span></button>
             <button class="cam-btn drone-cam-btn" onclick="switchCam(4)" style="display:none">🛩 Drone 5 <span
-                    style="color:#445;font-size:9px">[5]</span></button>
+                    style="color:#4a6a99;font-size:9px">[5]</span></button>
             <button class="cam-btn" onclick="switchCam(-2)">🗺 World <span
-                    style="color:#445;font-size:9px">[6]</span></button>
+                    style="color:#4a6a99;font-size:9px">[6]</span></button>
             <button class="cam-btn" onclick="switchCam(-3)">🚁 Swarm <span
-                    style="color:#445;font-size:9px">[7]</span></button>
+                    style="color:#4a6a99;font-size:9px">[7]</span></button>
         </div>
         <div id="right-panel">
             <div id="minimap-box">
@@ -800,27 +800,27 @@
                 <div id="minimap-content">
                     <div id="minimap-legend">
                         <div class="legend-item">
-                            <div class="legend-box" style="background: #441100; border-color: #ff440077;"></div>
+                            <div class="legend-box" style="background: #1a3a5c; border-color: #4a9eff77;"></div>
                             <span>Fire Zone</span>
                         </div>
                         <div class="legend-item">
-                            <div class="legend-box" style="background: #332810; border-color: #ffaa0055;"></div>
+                            <div class="legend-box" style="background: #2a4060; border-color: #6bb6ff55;"></div>
                             <span>Smoke</span>
                         </div>
                         <div class="legend-item">
-                            <div class="legend-box" style="background: #222; border-color: #444;"></div>
+                            <div class="legend-box" style="background: #1a2535; border-color: #3a5a7a;"></div>
                             <span>No-Fly</span>
                         </div>
                         <div class="legend-item">
-                            <div class="legend-box" style="background: #1a3a2a; border-color: #33aa3355;"></div>
+                            <div class="legend-box" style="background: #1a3a5c; border-color: #4a9eff55;"></div>
                             <span>Scanned</span>
                         </div>
                         <div class="legend-item" style="margin-top: 4px;">
-                            <div class="legend-circle" style="background: #ff3300; box-shadow: 0 0 4px #ff3300;"></div>
+                            <div class="legend-circle" style="background: #ff4433; box-shadow: 0 0 4px #ff4433;"></div>
                             <span>Survivor</span>
                         </div>
                         <div class="legend-item">
-                            <div class="legend-circle" style="background: #00ff44; box-shadow: 0 0 4px #00ff44;"></div>
+                            <div class="legend-circle" style="background: #00cc66; box-shadow: 0 0 4px #00cc66;"></div>
                             <span>Rescued</span>
                         </div>
                         <div class="legend-item">
@@ -828,7 +828,7 @@
                             <span>Dead</span>
                         </div>
                         <div class="legend-item" style="margin-top: 4px;">
-                            <div class="legend-box" style="background: #3388ff; border-radius: 50%;"></div>
+                            <div class="legend-box" style="background: #4a9eff; border-radius: 50%;"></div>
                             <span>Drone</span>
                         </div>
                         <div class="legend-item">
@@ -855,9 +855,9 @@
             <div id="status-content">
                 <div id="sc">Initializing...</div>
                 <div id="connection-status"
-                    style="margin-top: 8px; font-size: 10px; padding: 4px; background: rgba(0,0,0,0.3); border-radius: 4px; border: 1px solid rgba(255,255,255,0.1); margin-bottom: 8px;">
+                    style="margin-top: 8px; font-size: 10px; padding: 4px; background: rgba(0,0,0,0.3); border-radius: 4px; border: 1px solid rgba(74,158,255,0.15); margin-bottom: 8px;">
                     <div style="display:flex; justify-content:space-between;">
-                        <span><span id="llm-dot" style="color:#ff3333">●</span> API: MCP Server</span>
+                        <span><span id="llm-dot" style="color:#ff5544">●</span> API: MCP Server</span>
                     </div>
                 </div>
                 <div id="speed-slider-box">
@@ -865,17 +865,17 @@
                     <input type="range" id="speed-slider" min="5" max="50" value="20" oninput="updateSpeed(this.value)">
                     <span id="speed-val">0.20</span>
                     <button id="pause-btn" onclick="togglePause()"
-                        style="background:rgba(255,200,50,0.15);border-color:rgba(255,200,50,0.3);color:#ffd855; padding:3px 10px; border-radius:4px; font-size:10px; cursor:pointer; pointer-events:auto; border-width:1px; border-style:solid; transition:all 0.2s;">⏸
+                        style="background:rgba(74,158,255,0.15);border-color:rgba(74,158,255,0.3);color:#6bb6ff; padding:3px 10px; border-radius:4px; font-size:10px; cursor:pointer; pointer-events:auto; border-width:1px; border-style:solid; transition:all 0.2s;">⏸
                         Pause [P]</button>
                     <button id="scan-toggle-btn" onclick="toggleScannedSectors()"
-                        style="background:rgba(50,150,255,0.15);border-color:rgba(50,150,255,0.3);color:#66bbff; padding:3px 10px; border-radius:4px; font-size:10px; cursor:pointer; pointer-events:auto; border-width:1px; border-style:solid; transition:all 0.2s;">👁
+                        style="background:rgba(100,180,255,0.15);border-color:rgba(100,180,255,0.3);color:#88ccff; padding:3px 10px; border-radius:4px; font-size:10px; cursor:pointer; pointer-events:auto; border-width:1px; border-style:solid; transition:all 0.2s;">👁
                         Scanned (H)</button>
                     <button id="daynight-btn" onclick="toggleDayNight()">🌙 Night [N]</button>
                     <button id="daynight-btn" onclick="location.reload()"
-                        style="background:rgba(255,50,50,0.15);border-color:rgba(255,50,50,0.3);color:#ff6655">↻
+                        style="background:rgba(255,80,80,0.15);border-color:rgba(255,80,80,0.3);color:#ff8877">↻
                         Restart [R]</button>
                     <button id="add-drone-btn" onclick="addNewDrone()"
-                        style="background:rgba(0,200,100,0.05);border-color:rgba(0,200,100,0.15);color:#00cc66; padding:3px 10px; border-radius:4px; font-size:10px; cursor:not-allowed; pointer-events:none; border-width:1px; border-style:solid; transition:all 0.2s; opacity:0.5;">+
+                        style="background:rgba(0,180,120,0.05);border-color:rgba(0,180,120,0.15);color:#00aa88; padding:3px 10px; border-radius:4px; font-size:10px; cursor:not-allowed; pointer-events:none; border-width:1px; border-style:solid; transition:all 0.2s; opacity:0.5;">+
                         Add Drone</button>
                 </div>
             </div>
@@ -885,7 +885,7 @@
 
         <div id="start-controls">
             <label
-                style="color:#aaa; font-size:12px; font-weight:bold; letter-spacing:1px; margin-bottom:-10px;">MISSION
+                style="color:#8aaacc; font-size:12px; font-weight:bold; letter-spacing:1px; margin-bottom:-10px;">MISSION
                 PARAMETERS</label>
             <div>
                 <label>Survivors: <span id="surv-count-val"
@@ -903,7 +903,7 @@
                 <label
                     style="color:#aaa; font-size:10px; font-weight:bold; letter-spacing:1px; margin-bottom:0;">GOAL</label>
                 <select id="mission-goal"
-                    style="background:#1a2233; color:#00ff88; border:1px solid #ff8800; padding:5px 10px; border-radius:5px; cursor:pointer; font-family:inherit; font-size:12px; font-weight:bold; outline:none; text-transform:uppercase;">
+                    style="background:#1a2a40; color:#00cc88; border:1px solid #4a9eff; padding:5px 10px; border-radius:5px; cursor:pointer; font-family:inherit; font-size:12px; font-weight:bold; outline:none; text-transform:uppercase;">
                     <option value="scanAll">Scan All Sectors</option>
                     <option value="findAll">Find All Survivors</option>
                 </select>
@@ -951,9 +951,9 @@
             const btn = document.getElementById('pause-btn');
             if (btn) {
                 btn.innerHTML = isPaused ? '▶ Resume' : '⏸ Pause';
-                btn.style.color = isPaused ? '#55ff55' : '#ffd855';
-                btn.style.borderColor = isPaused ? 'rgba(85,255,85,0.3)' : 'rgba(255,200,50,0.3)';
-                btn.style.background = isPaused ? 'rgba(85,255,85,0.15)' : 'rgba(255,200,50,0.15)';
+                btn.style.color = isPaused ? '#55ff55' : '#6bb6ff';
+                btn.style.borderColor = isPaused ? 'rgba(85,255,85,0.3)' : 'rgba(74,158,255,0.3)';
+                btn.style.background = isPaused ? 'rgba(85,255,85,0.15)' : 'rgba(74,158,255,0.15)';
             }
 
             // Sync pause state with MCP backend to freeze physical simulation clock/battery/deadlines
@@ -993,10 +993,10 @@
             const dot = document.getElementById('llm-dot');
             if (dot) {
                 if (typeof mcpClient !== 'undefined' && mcpClient.connected) {
-                    dot.style.color = '#33ff33';
+                    dot.style.color = '#44cc66';
                     dot.parentElement.title = 'Connected to MCP Server (SSE)';
                 } else {
-                    dot.style.color = '#ff3333';
+                    dot.style.color = '#ff5544';
                     dot.parentElement.title = 'MCP Server unreachable';
                 }
             }
@@ -1007,8 +1007,8 @@
             showScannedSectors = !showScannedSectors;
             const btn = document.getElementById('scan-toggle-btn');
             if (btn) {
-                btn.style.background = showScannedSectors ? 'rgba(50,150,255,0.4)' : 'rgba(50,150,255,0.15)';
-                btn.style.color = showScannedSectors ? '#ffffff' : '#66bbff';
+                btn.style.background = showScannedSectors ? 'rgba(74,158,255,0.4)' : 'rgba(74,158,255,0.15)';
+                btn.style.color = showScannedSectors ? '#ffffff' : '#6bb6ff';
             }
         };
 
@@ -1019,7 +1019,7 @@
         const OBSTACLE_RADIUS = 1.5;
         const AVOIDANCE_LOOKAHEAD = 6;
         const AVOIDANCE_STRENGTH = 0.7;
-        const DRONE_COLORS = ['#3388ff', '#ff5533', '#33cc55', '#ff9900', '#cc44ff'];
+        const DRONE_COLORS = ['#4a9eff', '#ff6644', '#44cc88', '#ffaa44', '#aa66ff'];
         let DRONE_NAMES = ['drone_1', 'drone_2', 'drone_3', 'drone_4', 'drone_5'];
         const SURVIVORS = [];
         const BASE = { x: 5, z: 5 };
@@ -1371,29 +1371,29 @@
 
         function drawMinimap() {
             mapCtx.clearRect(0, 0, MAP_W, MAP_H);
-            mapCtx.fillStyle = '#0c0c14';
+            mapCtx.fillStyle = '#0d1520';
             mapCtx.fillRect(0, 0, MAP_W, MAP_H);
             // Sector tiles
             for (let r = 0; r < SECTORS; r++) for (let c = 0; c < SECTORS; c++) {
                 const h = hazardOf(r, c), scanned = sectorMeshes[`S${r}_${c}`]?.scanned;
-                let fill = '#1a3a1a';
-                if (h === 'no_fly') fill = '#222';
-                else if (h === 'fire') fill = scanned ? '#663300' : '#441100';
-                else if (h === 'smoke') fill = scanned ? '#1a4a2a' : '#332810';
-                else fill = scanned ? '#006633' : '#1a2a1a';
+                let fill = '#1a3a5c';
+                if (h === 'no_fly') fill = '#1a2535';
+                else if (h === 'fire') fill = scanned ? '#4a2a20' : '#2a1a15';
+                else if (h === 'smoke') fill = scanned ? '#2a4050' : '#1a3040';
+                else fill = scanned ? '#1a4a6c' : '#0d2538';
                 const x = MAP_PAD + c * MAP_CELL, y = MAP_PAD + r * MAP_CELL;
                 mapCtx.fillStyle = fill;
                 mapCtx.fillRect(x + 1, y + 1, MAP_CELL - 2, MAP_CELL - 2);
-                mapCtx.strokeStyle = '#2a3a2a'; mapCtx.lineWidth = 0.5;
+                mapCtx.strokeStyle = '#2a4a6a'; mapCtx.lineWidth = 0.5;
                 mapCtx.strokeRect(x + 1, y + 1, MAP_CELL - 2, MAP_CELL - 2);
                 if (scanned && h !== 'no_fly') {
-                    mapCtx.fillStyle = h === 'fire' ? 'rgba(255,120,0,0.28)' : 'rgba(0,255,100,0.35)';
+                    mapCtx.fillStyle = h === 'fire' ? 'rgba(255,100,80,0.25)' : 'rgba(74,158,255,0.3)';
                     mapCtx.fillRect(x + 1, y + 1, MAP_CELL - 2, MAP_CELL - 2);
                 }
-                if (h === 'fire') { mapCtx.fillStyle = '#ff440066'; mapCtx.font = '12px sans-serif'; mapCtx.fillText('🔥', x + MAP_CELL / 2 - 7, y + MAP_CELL / 2 + 5); }
+                if (h === 'fire') { mapCtx.fillStyle = '#ff664466'; mapCtx.font = '12px sans-serif'; mapCtx.fillText('🔥', x + MAP_CELL / 2 - 7, y + MAP_CELL / 2 + 5); }
             }
             // Obstacles as tiny dots on the map
-            mapCtx.fillStyle = '#33553322';
+            mapCtx.fillStyle = '#2a4a6c22';
             obstacles.forEach(o => {
                 const ox = MAP_PAD + (o.x / GRID) * (MAP_W - MAP_PAD * 2);
                 const oy = MAP_PAD + (o.z / GRID) * (MAP_H - MAP_PAD * 2);
@@ -1430,18 +1430,18 @@
                     // Green circle for found survivors
                     mapCtx.beginPath();
                     mapCtx.arc(sx, sy, 3, 0, Math.PI * 2);
-                    mapCtx.fillStyle = '#00ff44';
+                    mapCtx.fillStyle = '#00cc66';
                     mapCtx.fill();
                 } else {
                     // Red circle for unfound survivors
                     mapCtx.beginPath();
                     mapCtx.arc(sx, sy, 3, 0, Math.PI * 2);
-                    mapCtx.fillStyle = '#ff3300';
+                    mapCtx.fillStyle = '#ff4433';
                     mapCtx.fill();
                     // Pulse ring for unfound
                     mapCtx.beginPath();
                     mapCtx.arc(sx, sy, 5, 0, Math.PI * 2);
-                    mapCtx.strokeStyle = '#ff440044';
+                    mapCtx.strokeStyle = '#ff664444';
                     mapCtx.lineWidth = 1;
                     mapCtx.stroke();
                 }
@@ -1465,7 +1465,7 @@
                 const sr = (SCAN_RADIUS / GRID) * (MAP_W - MAP_PAD * 2);
                 mapCtx.beginPath(); mapCtx.arc(dx2, dy2, sr, 0, Math.PI * 2); mapCtx.strokeStyle = color + '33'; mapCtx.lineWidth = 0.8; mapCtx.stroke();
                 mapCtx.beginPath(); mapCtx.arc(dx2, dy2, 4, 0, Math.PI * 2); mapCtx.fillStyle = color; mapCtx.fill();
-                mapCtx.fillStyle = '#fff'; mapCtx.font = 'bold 7px sans-serif'; mapCtx.textAlign = 'center'; mapCtx.fillText(`${i + 1}`, dx2, dy2 + 2.5);
+                mapCtx.fillStyle = '#e0f0ff'; mapCtx.font = 'bold 7px sans-serif'; mapCtx.textAlign = 'center'; mapCtx.fillText(`${i + 1}`, dx2, dy2 + 2.5);
             });
             // Target lines
             drones.forEach((d, i) => {
@@ -2273,13 +2273,13 @@
                 h += `<div class="sr"><span class="sl">Time</span><span class="sv">${formatTime(serverMetrics.elapsed)}</span></div>`;
             }
             h += `<div class="sr"><span class="sl">Obstacles</span><span class="sv">${obstacles.length} tracked</span></div>`;
-            h += '<hr style="border-color:#222;margin:4px 0">';
+            h += '<hr style="border-color:#2a4a6a;margin:4px 0">';
             drones.forEach((d, i) => {
                 const batClass = d.battery < 25 ? 'low' : d.dead ? 'dead' : '';
                 const st = d.dead ? '💀' : d.recharging ? '🔋' : d.state === 'scanning' ? '📡' : d.state === 'moving' ? '→' : '✅';
                 const bp = d.bypassFrames > 0 ? ' ⚡' : '';
-                const killBtn = d.dead ? '' : `<button onmousedown="killDrone(${i})" style="margin-left:5px; padding:1px 4px; font-size:9px; font-weight:bold; background:#300; border:1px solid #f00; color:#f55; cursor:pointer; border-radius:3px;" title="Emergency Shutdown">KILL</button>`;
-                const chargeBtn  = (d.dead || d.recharging) ? '' : `<button onmousedown="recallDrone(${i}); showAlertDialog('🔋 DRONE ${i + 1} RETURNED TO CHARGING');" style="margin-left:3px; padding:1px 4px; font-size:9px; font-weight:bold; background:#002244; border:1px solid #00ff88; color:#00ff88; cursor:pointer; border-radius:3px;" title="Send to Charging Station">CHARGE</button>`;
+                const killBtn = d.dead ? '' : `<button onmousedown="killDrone(${i})" style="margin-left:5px; padding:1px 4px; font-size:9px; font-weight:bold; background:#3a1515; border:1px solid #ff5544; color:#ff8877; cursor:pointer; border-radius:3px;" title="Emergency Shutdown">KILL</button>`;
+                const chargeBtn  = (d.dead || d.recharging) ? '' : `<button onmousedown="recallDrone(${i}); showAlertDialog('🔋 DRONE ${i + 1} RETURNED TO CHARGING');" style="margin-left:3px; padding:1px 4px; font-size:9px; font-weight:bold; background:#0d2538; border:1px solid #00cc88; color:#00cc88; cursor:pointer; border-radius:3px;" title="Send to Charging Station">CHARGE</button>`;
                 h += `<div class="sr"><span class="sl" style="color:${DRONE_COLORS[i]}; display:flex; align-items:center;">${st} D${i + 1}${bp}${killBtn}${chargeBtn}</span><span class="sv ${batClass}">${d.battery.toFixed(0)}%</span></div>`;
             });
             document.getElementById('sc').innerHTML = h;
@@ -2309,14 +2309,14 @@
             ab.classList.remove('show');
             // Set colors based on message type
             if (msg.includes('DRONE') && msg.includes('DOWN')) {
-                ab.style.borderColor = '#ff2222';
-                ab.style.color = '#ff2222';
+                ab.style.borderColor = '#ff5544';
+                ab.style.color = '#ff7766';
             } else if (msg.includes('DRONE') && msg.includes('DEPLOYED')) {
-                ab.style.borderColor = '#0088ff';
-                ab.style.color = '#0088ff';
+                ab.style.borderColor = '#4a9eff';
+                ab.style.color = '#6bb6ff';
             } else {
-                ab.style.borderColor = '#00ff88';
-                ab.style.color = '#00ff88';
+                ab.style.borderColor = '#00cc88';
+                ab.style.color = '#44cc88';
             }
             void ab.offsetWidth;
             ab.classList.add('show');
