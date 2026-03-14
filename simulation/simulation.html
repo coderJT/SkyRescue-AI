@@ -828,8 +828,8 @@
                             <span>Dead</span>
                         </div>
                         <div class="legend-item" style="margin-top: 4px;">
-                            <div class="legend-box" style="background: #4a9eff; border-radius: 50%;"></div>
-                            <span>Drone</span>
+                            <div class="legend-box" style="background: linear-gradient(90deg, #ff0000, #ff8800, #ffff00, #00ff00, #0088ff, #8800ff); border-radius: 50%;"></div>
+                            <span>Drone (Random)</span>
                         </div>
                         <div class="legend-item">
                             <div class="legend-icon">🔥</div>
@@ -1019,7 +1019,11 @@
         const OBSTACLE_RADIUS = 1.5;
         const AVOIDANCE_LOOKAHEAD = 6;
         const AVOIDANCE_STRENGTH = 0.7;
-        const DRONE_COLORS = ['#4a9eff', '#ff6b6b', '#4ecdc4', '#ffe66d', '#95e1d3'];
+        function getRandomDroneColor() {
+            const hue = Math.floor(Math.random() * 360);
+            return `hsl(${hue}, 70%, 60%)`;
+        }
+        let DRONE_COLORS = [];
         let DRONE_NAMES = ['drone_1', 'drone_2', 'drone_3', 'drone_4', 'drone_5'];
         const SURVIVORS = [];
         const BASE = { x: 5, z: 5 };
@@ -2135,7 +2139,8 @@
             }
 
             // Create visual drone representation matching the startMission style
-            const color = DRONE_COLORS[newIdx % DRONE_COLORS.length];
+            const color = getRandomDroneColor();
+            DRONE_COLORS.push(color);
 
             // Create drone group with the same structure as startMission
             const g = new THREE.Group();
@@ -2246,6 +2251,14 @@
                 label.className = 'drone-label';
                 label.style.cssText = 'position:absolute;transform:translate(-50%,-100%);pointer-events:none;font-family:Arial,sans-serif;font-size:11px;font-weight:bold;text-shadow:0 0 4px #000;white-space:nowrap;z-index:1000;color:' + color + ';';
                 document.body.appendChild(label);
+            }
+
+            // Show and color the camera button for the new drone
+            const camBtn = document.querySelectorAll('.drone-cam-btn')[newIdx];
+            if (camBtn) {
+                camBtn.style.display = 'block';
+                camBtn.style.borderColor = color;
+                camBtn.style.color = color;
             }
 
             console.log(`[Add Drone] Fleet size now: ${drones.length}`);
@@ -3306,8 +3319,11 @@
             });
 
             // ── Create drones ──
+            DRONE_COLORS = [];
             for (let i = 0; i < droneCount; i++) {
-                const g = createDrone(DRONE_COLORS[i]);
+                const color = getRandomDroneColor();
+                DRONE_COLORS.push(color);
+                const g = createDrone(color);
                 g.position.set(BASE.x + i * 2, DRONE_FLY_HEIGHT, BASE.z + i * 2);
                 scene.add(g);
 
@@ -3335,11 +3351,14 @@
                 });
             }
 
-            // Hide unused camera buttons
+            // Hide unused camera buttons and color them by drone
             document.querySelectorAll('.drone-cam-btn').forEach((b, i) => {
                 const label = document.getElementById(`drone-label-${i}`);
                 if (i < droneCount) {
-                    b.style.display = 'block'; if (label) label.style.display = 'block';
+                    b.style.display = 'block';
+                    b.style.borderColor = DRONE_COLORS[i];
+                    b.style.color = DRONE_COLORS[i];
+                    if (label) label.style.display = 'block';
                 } else {
                     b.style.display = 'none'; if (label) label.style.display = 'none';
                 }
