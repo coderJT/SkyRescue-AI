@@ -3297,18 +3297,36 @@
         }, true);
         
         // Also handle drone card clicks (for camera switching)
-        fleetList.addEventListener('click', function(e) {
+        // Use same deferred pattern as buttons for consistency
+        let pendingCardAction = null;
+        let pendingCardTimer = null;
+        
+        fleetList.addEventListener('mousedown', function(e) {
             // Only handle if clicking the card itself, not buttons
             if (e.target.closest('.drone-card-btn')) return;
             
             const card = e.target.closest('.drone-card');
             if (!card) return;
             
+            e.stopPropagation();
+            
             const droneIdx = parseInt(card.getAttribute('data-drone-idx'));
-            if (!isNaN(droneIdx)) {
-                switchCam(droneIdx);
+            if (isNaN(droneIdx)) return;
+            
+            // Store action and execute with delay
+            pendingCardAction = droneIdx;
+            
+            if (pendingCardTimer) {
+                clearTimeout(pendingCardTimer);
             }
-        });
+            
+            pendingCardTimer = setTimeout(() => {
+                if (pendingCardAction !== null) {
+                    switchCam(pendingCardAction);
+                    pendingCardAction = null;
+                }
+            }, 50);
+        }, true);
 
         // ─── MCP SYNC LOOP ───
         let isSyncing = false;
