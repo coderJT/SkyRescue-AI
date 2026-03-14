@@ -937,8 +937,19 @@
         <div id="top-bar">
             <div id="top-bar-left">
                 <div class="top-bar-item">
-                    <span class="top-bar-icon">🔥</span>
-                    <span class="top-bar-label">Mission</span>
+                    <span class="top-bar-icon">🌡️</span>
+                    <div style="display:flex; flex-direction:column; align-items:flex-start; gap:1px;">
+                        <span class="top-bar-label">Temperature</span>
+                        <span class="top-bar-value" id="temp-display">32°C</span>
+                    </div>
+                </div>
+                <div style="width:1px; height:25px; background:rgba(74,158,255,0.2);"></div>
+                <div class="top-bar-item">
+                    <span class="top-bar-icon">�</span>
+                    <div style="display:flex; flex-direction:column; align-items:flex-start; gap:1px;">
+                        <span class="top-bar-label">Wind</span>
+                        <span class="top-bar-value" id="wind-display">35 km/h NE</span>
+                    </div>
                 </div>
             </div>
             <div id="top-bar-center">
@@ -964,12 +975,11 @@
         </div>
 
         <div id="cam-panel">
-            <button class="cam-btn active" onclick="switchCam(-1)">🌐 Overview <span
-                    style="color:#4a6a99;font-size:9px">[0]</span></button>
-            <button class="cam-btn" onclick="switchCam(-2)">🗺 World <span
-                    style="color:#4a6a99;font-size:9px">[6]</span></button>
-            <button class="cam-btn" onclick="switchCam(-3)">🚁 Swarm <span
-                    style="color:#4a6a99;font-size:9px">[7]</span></button>
+            <button class="cam-btn active" onclick="cycleCameraView()">
+                <span class="cam-icon">🎥</span>
+                <span class="cam-label" id="cam-view-label">Overview</span>
+                <span class="cam-shortcut">[0]</span>
+            </button>
         </div>
         <div id="right-panel">
             <div id="minimap-box">
@@ -1061,7 +1071,7 @@
             </div>
         </div>
         <div id="alert-box"></div>
-        <div id="instr">Click drone cards to view camera · 0=Overview 6=World 7=Swarm · Click+Drag to orbit</div>
+        <div id="instr">Click 🎥 or drone cards to cycle camera views · 0=Overview 6=World 7=Swarm · Click+Drag to orbit</div>
 
         <div id="start-controls">
             <label
@@ -2250,13 +2260,25 @@
         }
 
         // Camera
+        const cameraViews = [
+            { idx: -1, label: 'Overview', shortcut: '[0]' },
+            { idx: -2, label: 'World', shortcut: '[6]' },
+            { idx: -3, label: 'Swarm', shortcut: '[7]' }
+        ];
+        let currentViewIndex = 0;
+
+        window.cycleCameraView = function () {
+            currentViewIndex = (currentViewIndex + 1) % cameraViews.length;
+            const view = cameraViews[currentViewIndex];
+            switchCam(view.idx);
+            
+            // Update button label and shortcut
+            document.getElementById('cam-view-label').textContent = view.label;
+            document.querySelector('.cam-shortcut').textContent = view.shortcut;
+        };
+
         window.switchCam = function (idx) {
             activeDrone = idx;
-            // Update cam-btn active states (Overview=0 -> -1, World=1 -> -2, Swarm=2 -> -3)
-            document.querySelectorAll('.cam-btn').forEach((b, i) => {
-                let btnIdx = i === 0 ? -1 : i === 1 ? -2 : -3;
-                b.classList.toggle('active', btnIdx === idx);
-            });
             // Reset follow tracking so camera re-centers on new drone
             drones.forEach(d => d._lastCamPos = null);
             controls.enabled = true; // always allow orbit
@@ -2275,10 +2297,25 @@
         document.addEventListener('keydown', e => {
             if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT') return;
             const k = e.key.toLowerCase();
-            if (k === '0') switchCam(-1);
+            if (k === '0') {
+                currentViewIndex = 0;
+                switchCam(-1);
+                document.getElementById('cam-view-label').textContent = 'Overview';
+                document.querySelector('.cam-shortcut').textContent = '[0]';
+            }
             else if (k >= '1' && k <= '5') switchCam(parseInt(k) - 1);
-            else if (k === '6') switchCam(-2);
-            else if (k === '7') switchCam(-3);
+            else if (k === '6') {
+                currentViewIndex = 1;
+                switchCam(-2);
+                document.getElementById('cam-view-label').textContent = 'World';
+                document.querySelector('.cam-shortcut').textContent = '[6]';
+            }
+            else if (k === '7') {
+                currentViewIndex = 2;
+                switchCam(-3);
+                document.getElementById('cam-view-label').textContent = 'Swarm';
+                document.querySelector('.cam-shortcut').textContent = '[7]';
+            }
             else if (k === 'h') toggleScannedSectors();
             else if (k === 'p') togglePause();
             else if (k === 'n') toggleDayNight();
@@ -3310,6 +3347,24 @@
                     serverMetrics.total = world.total_survivors;
                     serverMetrics.scanned = world.sectors_scanned;
                     serverMetrics.scannable = world.total_scannable_sectors;
+
+                    // --- UPDATE WIND & TEMPERATURE DISPLAYS ---
+                    if (world.wind) {
+                        const windSpeed = Math.round(world.wind.speed_kmh);
+                        const windAngle = world.wind.angle_deg;
+                        // Convert angle to compass direction
+                        const dirs = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"];
+                        const dirIdx = Math.round(windAngle / 45) % 8;
+                        const windDir = dirs[dirIdx];
+                        document.getElementById('wind-display').textContent = `${windSpeed} km/h ${windDir}`;
+                    }
+                    
+                    // Simulate temperature based on fire zones (more fire = higher temp)
+                    const fireCount = FIRE.size;
+                    const baseTemp = 28; // Base forest temperature
+                    const fireImpact = fireCount * 2; // Each fire zone adds 2°C
+                    const currentTemp = baseTemp + fireImpact + Math.sin(Date.now() / 5000) * 2; // Slight fluctuation
+                    document.getElementById('temp-display').textContent = `${Math.round(currentTemp)}°C`;
 
                     // Sync Mission Completion
                     if (world.mission_complete && !missionComplete) {
