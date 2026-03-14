@@ -610,6 +610,9 @@
             display: flex;
             gap: 3px;
             margin-top: 4px;
+            pointer-events: auto;
+            position: relative;
+            z-index: 5;
         }
 
         .drone-card-btn {
@@ -618,11 +621,23 @@
             font-weight: 600;
             border-radius: 2px;
             cursor: pointer;
+            pointer-events: auto;
             border: 1px solid;
             transition: all 0.2s;
             background: transparent;
             text-transform: uppercase;
             letter-spacing: 0.3px;
+            position: relative;
+            z-index: 10;
+            user-select: none;
+            -webkit-user-select: none;
+            touch-action: manipulation;
+            outline: none;
+            -webkit-tap-highlight-color: transparent;
+        }
+        
+        .drone-card-btn:active {
+            transform: scale(0.95);
         }
 
         .drone-card-btn.kill {
@@ -2324,8 +2339,38 @@
 
         // Manual Drone Kill Function
         window.killDrone = function (idx) {
-            if (drones[idx] && !drones[idx].dead) {
-                drones[idx].battery = 0; // The animation loop will detect this and crash the drone on the next frame
+            const d = drones[idx];
+            if (d && !d.dead) {
+                // Immediately mark as dead and stop all movement
+                d.battery = 0;
+                d.dead = true;
+                d.state = 'idle';
+                d.recharging = false;
+                
+                // Release any sector assignment
+                if (d.target && d.target.sector) {
+                    const qs = globalQueue.find(q => q.k === d.target.sector);
+                    if (qs) qs.assigned = false;
+                    if (useLLM && mcpClient && mcpClient.connected) {
+                        mcpClient.callTool('assign_target', { drone_id: `drone_${idx + 1}`, sector_id: '__RECALL__' }).catch(e => console.warn(e));
+                    }
+                }
+                
+                // Clear target
+                d.target = null;
+                
+                // Visual crash effect
+                d.group.position.y = 0.5;
+                d.group.children[0].material.color.setHex(0x330000);
+                d.group.children[0].material.emissive.setHex(0x110000);
+                
+                // Notifications
+                showAlertDialog(`⚠️ DRONE ${idx + 1} EMERGENCY SHUTDOWN`);
+                addThought(idx, 'danger', `💀 Emergency shutdown initiated — all systems offline.`);
+                addMCP(idx, 'call', 'report_drone_loss', { 
+                    drone_id: `drone_${idx + 1}`, 
+                    location: [Math.round(d.group.position.x), Math.round(d.group.position.z)] 
+                }, { status: 'manual_kill', battery: 0 });
             }
         };
 
@@ -2348,6 +2393,7 @@
             d.state = 'moving';
             addMCP(idx, 'call', 'recall_for_charging', { drone_id: `drone_${idx + 1}` }, { status: 'manual_rtb', base: [BASE.x, BASE.z] });
             addThought(idx, 'action', `🔋 Got a manual recall — heading back to the charging station now.`);
+            showAlertDialog(`🔋 DRONE ${idx + 1} RETURNING TO CHARGING`);
         };
 
         // Add a new drone to the fleet
@@ -2527,7 +2573,7 @@
                 const batClass = d.battery < 25 ? 'low' : d.dead ? 'dead' : '';
                 const isActive = activeDrone === i;
 
-                fleetHtml += `<div class="drone-card${isActive ? ' active' : ''}" onclick="switchCam(${i})">`;
+                fleetHtml += `<div class="drone-card${isActive ? ' active' : ''}" data-drone-idx="${i}" data-card="true">`;
                 fleetHtml += `<div class="drone-card-header">`;
                 fleetHtml += `<span class="drone-card-name" style="color:${color}">D${i + 1}</span>`;
                 fleetHtml += `<span class="drone-card-status ${statusClass}">${statusText}</span>`;
@@ -2540,15 +2586,16 @@
                 fleetHtml += `</div>`;
                 if (!d.dead) {
                     fleetHtml += `<div class="drone-card-actions">`;
-                    fleetHtml += `<button class="drone-card-btn kill" onclick="event.stopPropagation(); killDrone(${i})" title="Emergency Shutdown">KILL</button>`;
+                    fleetHtml += `<button type="button" class="drone-card-btn kill" data-drone-idx="${i}" data-action="kill" title="Emergency Shutdown">KILL</button>`;
                     if (!d.recharging) {
-                        fleetHtml += `<button class="drone-card-btn charge" onclick="event.stopPropagation(); recallDrone(${i}); showAlertDialog('🔋 DRONE ${i + 1} RETURNED TO CHARGING');" title="Send to Charging Station">CHARGE</button>`;
+                        fleetHtml += `<button type="button" class="drone-card-btn charge" data-drone-idx="${i}" data-action="charge" title="Send to Charging Station">CHARGE</button>`;
                     }
                     fleetHtml += `</div>`;
                 }
                 fleetHtml += `</div>`;
             });
             document.getElementById('fleet-list').innerHTML = fleetHtml;
+            
             if (serverMetrics.found > prevFoundCount) {
                 prevFoundCount = serverMetrics.found;
                 showAlertDialog('🟢 SURVIVOR FOUND!');
@@ -3204,6 +3251,63 @@
             cam.aspect = innerWidth / innerHeight;
             cam.updateProjectionMatrix();
             renderer.setSize(innerWidth, innerHeight);
+        });
+
+        // ─── DRONE BUTTON EVENT DELEGATION ───
+        // Store pending button action to handle rapid HTML regeneration
+        let pendingButtonAction = null;
+        let pendingButtonTimer = null;
+        
+        const fleetList = document.getElementById('fleet-list');
+        
+        // Handle button mousedown - store the action immediately
+        fleetList.addEventListener('mousedown', function(e) {
+            const btn = e.target.closest('.drone-card-btn');
+            if (!btn) return;
+            
+            e.stopImmediatePropagation();
+            e.stopPropagation();
+            e.preventDefault();
+            
+            const droneIdx = parseInt(btn.getAttribute('data-drone-idx'));
+            const action = btn.getAttribute('data-action');
+            
+            // Store action and execute on next frame
+            pendingButtonAction = { droneIdx, action };
+            
+            // Clear any existing timer
+            if (pendingButtonTimer) {
+                clearTimeout(pendingButtonTimer);
+            }
+            
+            // Execute after a short delay to ensure DOM is stable
+            pendingButtonTimer = setTimeout(() => {
+                if (pendingButtonAction) {
+                    const { droneIdx, action } = pendingButtonAction;
+                    if (action === 'kill') {
+                        killDrone(droneIdx);
+                    } else if (action === 'charge') {
+                        recallDrone(droneIdx);
+                    }
+                    pendingButtonAction = null;
+                }
+            }, 50);
+            
+            return false;
+        }, true);
+        
+        // Also handle drone card clicks (for camera switching)
+        fleetList.addEventListener('click', function(e) {
+            // Only handle if clicking the card itself, not buttons
+            if (e.target.closest('.drone-card-btn')) return;
+            
+            const card = e.target.closest('.drone-card');
+            if (!card) return;
+            
+            const droneIdx = parseInt(card.getAttribute('data-drone-idx'));
+            if (!isNaN(droneIdx)) {
+                switchCam(droneIdx);
+            }
         });
 
         // ─── MCP SYNC LOOP ───
