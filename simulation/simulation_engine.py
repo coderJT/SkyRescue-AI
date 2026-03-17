@@ -7,7 +7,7 @@ import math
 import time
 import random
 import traceback
-from drone.drone import Drone
+from drone.Drone import Drone
 from config.settings import settings
 
 
@@ -316,7 +316,7 @@ class SimulationEngine:
         If drone_id is not provided, generates one automatically.
         If position is not provided, places drone at base camp.
         """
-        from drone.drone import Drone
+        from drone.Drone import Drone
 
         # Generate drone ID if not provided
         if not drone_id:
