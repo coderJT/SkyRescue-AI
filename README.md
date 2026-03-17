@@ -197,6 +197,52 @@ python agent/commander_agent.py
 4. **Watch** — Use camera buttons or keys `0-7` to follow individual drones or view the swarm
 5. **Monitor** — Chain-of-Thought panel shows real-time reasoning; toggle MCP to see protocol messages
 
+
+
+*Post-Rescue Dashboard (Standalone)
+
+The dashboard is a separate monitor and does not require changes to the main simulation code.
+Source files:
+- post_rescue_dashboard.py
+- post_rescue_dashboard.html
+
+Prerequisites
+1. Python 3.11+
+2. Dependencies installed from requirements.txt
+3. Running MCP backend server on port 8000
+
+Setup
+1. Install dependencies
+   - pip install -r requirements.txt
+
+2. Set environment variables
+   - PowerShell:
+     - $env:GROQ_API_KEY="YOUR_GROQ_API_KEY"
+   - Optional dashboard settings:
+     - $env:MCP_SSE_URL="http://localhost:8000/sse"
+     - $env:DASHBOARD_PORT="8010"
+     - $env:DASHBOARD_POLL_INTERVAL="2"
+
+Run
+1. Start backend (Terminal 1)
+   - python start.py
+
+2. Start dashboard (Terminal 2)
+   - python post_rescue_dashboard.py
+
+3. Open dashboard in browser
+   - http://localhost:8010
+
+What the dashboard shows
+1. Mission status and elapsed time
+2. Coverage percentage
+3. Survivors found vs total
+4. Sectors scanned vs total
+5. Fleet stats (active, charging, offline, average battery)
+6. Discovered fire/smoke sectors
+7. Mission log tail
+
+
 ### 5. (Optional) MCP Inspector
 
 To explore the tools via the inspector, you must point it to the SSE endpoint:
