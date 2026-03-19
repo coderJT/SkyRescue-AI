@@ -2,10 +2,11 @@ import asyncio
 import os
 import threading
 import time
-from typing import Any, Dict, Tuple
+from typing import Any, Dict
 
 from fastapi import FastAPI
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 import uvicorn
 from mcp import ClientSession
 from mcp.client.sse import sse_client
@@ -145,11 +146,31 @@ def poller_thread() -> None:
 
 
 app = FastAPI(title="Post Rescue Dashboard")
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=False,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 @app.get("/")
-def index() -> FileResponse:
-    return FileResponse(os.path.join(ROOT, "dashboard", "post_rescue_dashboard.html"))
+def index() -> JSONResponse:
+    return JSONResponse(
+        {
+            "service": "post-rescue-dashboard-api",
+            "status": "ok",
+            "message": "Run the new dashboard UI separately (e.g., Next.js dev server).",
+            "endpoints": {
+                "state": "/api/state",
+                "start": "/api/mission/start",
+                "pause": "/api/mission/pause",
+                "reset": "/api/mission/reset",
+                "recall_drone": "/api/drone/{drone_id}/recall",
+            },
+        }
+    )
 
 
 @app.get("/api/state")
@@ -157,6 +178,44 @@ def get_state() -> JSONResponse:
     with state_lock:
         payload = dict(state_cache)
     return JSONResponse(payload)
+
+
+async def execute_tool_once(tool_name: str, args: Dict[str, Any] | None = None) -> Any:
+    async with sse_client(MCP_SSE_URL) as (read_stream, write_stream):
+        async with ClientSession(read_stream, write_stream) as session:
+            await session.initialize()
+            return await call_tool_json(session, tool_name, args or {})
+
+
+@app.post("/api/mission/start")
+async def start_mission(payload: Dict[str, Any] | None = None) -> JSONResponse:
+    payload = payload or {}
+    args = {
+        "survivor_count": payload.get("survivor_count"),
+        "active_drones": payload.get("active_drones"),
+    }
+    result = await execute_tool_once("start_mission", args)
+    return JSONResponse({"ok": True, "result": result})
+
+
+@app.post("/api/mission/pause")
+async def pause_mission(payload: Dict[str, Any] | None = None) -> JSONResponse:
+    payload = payload or {}
+    paused = payload.get("paused", True)
+    result = await execute_tool_once("toggle_pause", {"paused": bool(paused)})
+    return JSONResponse({"ok": True, "result": result})
+
+
+@app.post("/api/mission/reset")
+async def reset_mission() -> JSONResponse:
+    result = await execute_tool_once("reset_mission", {})
+    return JSONResponse({"ok": True, "result": result})
+
+
+@app.post("/api/drone/{drone_id}/recall")
+async def recall_drone(drone_id: str) -> JSONResponse:
+    result = await execute_tool_once("recall_for_charging", {"drone_id": drone_id})
+    return JSONResponse({"ok": True, "result": result})
 
 
 if __name__ == "__main__":

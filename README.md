@@ -159,7 +159,7 @@ This script starts the MCP server and automatically opens the 3D simulation in y
 
 ```bash
 # Set your Groq API key
-export GROQ_API_KEY=your_api_key_here
+export GROQ_API_KEY="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"
 
 # Start the server + UI
 python start.py
