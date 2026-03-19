@@ -179,7 +179,7 @@ Once the simulation is running and the "START SIMULATION" button has been clicke
 
 ```bash
 # Run the autonomous brain
-python agent/commander_agent.py
+python agent/orchestrator.py
 ```
 
 ### 4. Watch the Mission
@@ -199,39 +199,12 @@ python agent/commander_agent.py
 
 
 
-*Post-Rescue Dashboard (Standalone)
-
-The dashboard is a separate monitor and does not require changes to the main simulation code.
-Source files:
-- post_rescue_dashboard.py
-- post_rescue_dashboard.html
-
-Prerequisites
-1. Python 3.11+
-2. Dependencies installed from requirements.txt
-3. Running MCP backend server on port 8000
-
-Setup
-1. Install dependencies
-   - pip install -r requirements.txt
-
-2. Set environment variables
-   - PowerShell:
-     - $env:GROQ_API_KEY="YOUR_GROQ_API_KEY"
-   - Optional dashboard settings:
-     - $env:MCP_SSE_URL="http://localhost:8000/sse"
-     - $env:DASHBOARD_PORT="8010"
-     - $env:DASHBOARD_POLL_INTERVAL="2"
-
-Run
-1. Start backend (Terminal 1)
-   - python start.py
-
-2. Start dashboard (Terminal 2)
-   - python post_rescue_dashboard.py
-
+*Sky Rescue Dashboard (Standalone)
 3. Open dashboard in browser
-   - http://localhost:8010
+   - cd dashboard
+   - npm install
+   - npm run dev -- -p 3000
+   - http://localhost:3000/
 
 What the dashboard shows
 1. Mission status and elapsed time
