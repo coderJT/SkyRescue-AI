@@ -88,16 +88,16 @@ Full Model Context Protocol server with **17 tools** that any MCP client can dis
 
 ```
 ┌─────────────────────────────────────────────────────────┐
-│                   3D Browser Simulation                  │
-│              (simulation.html — Three.js)                │
-│                                                          │
-│  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐   │
-│  │  Drone 1 │ │  Drone 2 │ │  Drone 3 │ │  Drone N │   │
-│  └────┬─────┘ └────┬─────┘ └────┬─────┘ └────┬─────┘   │
-│       │             │             │             │         │
-│       └─────────────┴──────┬──────┴─────────────┘         │
-│                            │ MCP over SSE                 │
-└────────────────────────────┼──────────────────────────────┘
+│                   3D Browser Simulation                 │
+│              (simulation.html — Three.js)               │
+│                                                         │
+│  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐    │
+│  │  Drone 1 │ │  Drone 2 │ │  Drone 3 │ │  Drone N │    │
+│  └────┬─────┘ └────┬─────┘ └────┬─────┘ └────┬─────┘    │
+│       │             │             │             │       │
+│       └─────────────┴──────┬──────┴─────────────┘       │
+│                            │ MCP over SSE               │
+└────────────────────────────┼────────────────────────────┘
                              │
               ┌──────────────▼──────────────┐
               │      MCP Server (SSE)       │
@@ -118,7 +118,7 @@ Full Model Context Protocol server with **17 tools** that any MCP client can dis
 ## 📁 Project Structure
 
 ```
-vhack-cs3/
+SkyRescue-AI/
 ├── simulation/
 │   ├── simulation.html            # 🖥️  Main 3D simulation (Three.js renderer)
 │   └── simulation_engine.py       # ⚙️  Core physics & mission logic
@@ -146,8 +146,8 @@ vhack-cs3/
 ### 1. Project Setup
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/vhack-cs3.git
-cd vhack-cs3
+git clone https://github.com/coderJT/SkyRescue-AI.git
+cd SkyRescue-AI
 
 # Install dependencies
 pip install -r requirements.txt
@@ -170,6 +170,9 @@ python start.py
 Once the simulation is running, launch the agent to take control of the swarm.
 
 ```bash
+# Set your Groq API key
+export GROQ_API_KEY=your_api_key_here
+
 # Run the autonomous brain
 python agent/orchestrator.py
 ```
