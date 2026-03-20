@@ -178,7 +178,7 @@ Once the simulation is running and the "START SIMULATION" button has been clicke
 
 ```bash
 # Run the autonomous brain
-python agent/commander_agent.py
+python agent/orchestrator.py
 ```
 
 ### 4. Watch the Mission
@@ -195,6 +195,25 @@ python agent/commander_agent.py
 3. **Toggle Brain Mode** — Click `🧠 Brain: Local` to switch to `🧠 Brain: LLM` for AI-powered decisions
 4. **Watch** — Use camera buttons or keys `0-7` to follow individual drones or view the swarm
 5. **Monitor** — Chain-of-Thought panel shows real-time reasoning; toggle MCP to see protocol messages
+
+
+
+*Sky Rescue Dashboard (Standalone)
+3. Open dashboard in browser
+   - cd dashboard
+   - npm install
+   - npm run dev -- -p 3000
+   - http://localhost:3000/
+
+What the dashboard shows
+1. Mission status and elapsed time
+2. Coverage percentage
+3. Survivors found vs total
+4. Sectors scanned vs total
+5. Fleet stats (active, charging, offline, average battery)
+6. Discovered fire/smoke sectors
+7. Mission log tail
+
 
 ### 5. (Optional) MCP Inspector
 
